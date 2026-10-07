@@ -52,6 +52,22 @@ def test_health(env):
     assert env[0].get("/health").json() == {"status": "ok"}
 
 
+def test_root_reports_service_running(env):
+    response = env[0].get("/")
+    assert response.status_code == 200
+    assert "Server is running" in response.text
+    assert response.headers["content-type"].startswith("text/html")
+
+
+def test_starts_without_monitoring_credentials():
+    settings = Settings(minister_name="", youtube_api_key="")
+    app = create_app(settings, background=False)
+    with TestClient(app) as client:
+        assert client.get("/").status_code == 200
+        assert client.get("/health").json() == {"status": "ok"}
+        assert client.get("/status").json() == {"status": "offline"}
+
+
 def test_status_offline(env):
     assert env[0].get("/status").json() == {"status": "offline"}
 
