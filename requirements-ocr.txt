@@ -1,0 +1,5 @@
+# Thumbnail verification (reads the minister's name printed on the stream thumbnail).
+# Pure pip: no system packages needed, works on current Python (3.10 - 3.14).
+# Install with:  python -m pip install -r requirements-ocr.txt
+rapidocr>=3.0
+onnxruntime>=1.18

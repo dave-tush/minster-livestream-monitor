@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from .config import Settings
-from .matching import evaluate
+from .matching import evaluate, search_name
 from .models import LiveVideo, MatchResult
 
 log = logging.getLogger("monitor.youtube")
@@ -142,17 +142,33 @@ def parse_video(item: dict) -> LiveVideo | None:
     )
 
 
-def find_live_streams(client: YouTubeClient, settings: Settings,
-                      run_search: bool = True) -> list[tuple[LiveVideo, MatchResult]]:
+_IGNORED_LOGGED: set[str] = set()
+
+
+def _thumbnail_text(video: LiveVideo, settings: Settings, thumbnails) -> str | None:
+    """Text printed on the thumbnail, if verification is on. Trusted channels don't need it."""
+    if thumbnails is None or settings.trusted_only or video.channel_id in settings.trusted_channel_ids:
+        return None
+    return thumbnails.read(video)
+
+
+def find_live_streams(client: YouTubeClient, settings: Settings, run_search: bool = True,
+                      thumbnails=None, remembered_ids: list[str] | None = None,
+                      live_ids_out: list[str] | None = None) -> list[tuple[LiveVideo, MatchResult]]:
     """Return matching live videos, best match first.
 
-    Cheap path: trusted channels' recent uploads (1 unit each).
-    Expensive path (run_search=True): keyword search (100 units). Skipped if trusted_only.
+    Cheap path: trusted + watched channels' recent uploads (1 unit each), and live streams found by an
+    earlier search (`remembered_ids`), so thumbnails not read yet get read on the next pass.
+    Expensive path (run_search=True): keyword searches (100 units each). Skipped if trusted_only.
+    `live_ids_out`, if given, is filled with the ids that are live now (the caller remembers them).
     One failing channel does not stop the others; quota errors always propagate.
     """
     candidate_ids: list[str] = []
 
-    for channel_id in settings.trusted_channel_ids:
+    channels = list(settings.trusted_channel_ids)
+    if not settings.trusted_only:                       # watched channels only matter when we verify by name
+        channels += [c for c in settings.watch_channel_ids if c not in channels]
+    for channel_id in channels:
         try:
             candidate_ids += client.channel_recent_video_ids(channel_id)
         except YouTubeQuotaError:
@@ -161,20 +177,30 @@ def find_live_streams(client: YouTubeClient, settings: Settings,
             log.warning("Could not read channel %s: %s", channel_id, exc)
 
     if run_search and not settings.trusted_only:
-        candidate_ids += client.search_live_video_ids(settings.minister_name)
+        for query in dict.fromkeys([search_name(settings.minister_name), *settings.extra_search_queries]):
+            candidate_ids += client.search_live_video_ids(query)
 
+    candidate_ids += remembered_ids or []
     unique_ids = list(dict.fromkeys(candidate_ids))
     if not unique_ids:
         return []
 
+    if thumbnails is not None:
+        thumbnails.begin_pass()
     results = []
+    if live_ids_out is not None:
+        live_ids_out.clear()
     for video in client.fetch_videos(unique_ids):
         if not video.is_live:
             continue
-        match = evaluate(video, settings)
+        if live_ids_out is not None and len(live_ids_out) < 40:
+            live_ids_out.append(video.video_id)
+        match = evaluate(video, settings, _thumbnail_text(video, settings, thumbnails))
         if not match.matched:
-            log.info("Ignored live video %s (%r on %r): not a confident match (score %s)",
-                     video.video_id, video.title, video.channel_title, match.score)
+            if video.video_id not in _IGNORED_LOGGED and len(_IGNORED_LOGGED) < 500:   # log once, not every pass
+                _IGNORED_LOGGED.add(video.video_id)
+                log.info("Ignored live video %s (%r on %r): not a confident match (score %s)",
+                         video.video_id, video.title, video.channel_title, match.score)
             continue
         if not video.embeddable:
             log.warning("Live video %s matched but embedding is disabled by the owner", video.video_id)
@@ -186,7 +212,7 @@ def find_live_streams(client: YouTubeClient, settings: Settings,
     return results
 
 
-def diagnose(client: YouTubeClient, settings: Settings) -> None:
+def diagnose(client: YouTubeClient, settings: Settings, thumbnails=None) -> None:
     """Print every candidate YouTube returns and why it is accepted or rejected."""
     ids: list[str] = []
     for channel_id in settings.trusted_channel_ids:
@@ -200,8 +226,11 @@ def diagnose(client: YouTubeClient, settings: Settings) -> None:
               "live yet, or the name doesn't match how YouTube lists it.")
         return
     print(f"YouTube returned {len(ids)} candidate(s):\n")
+    if thumbnails is not None:
+        thumbnails.begin_pass()
     for video in client.fetch_videos(ids):
-        match = evaluate(video, settings)
+        thumb_text = _thumbnail_text(video, settings, thumbnails) if video.is_live else None
+        match = evaluate(video, settings, thumb_text)
         if not video.is_live:
             verdict = f"SKIP    not live (status: {video.broadcast_status})"
         elif not match.matched:
@@ -211,7 +240,10 @@ def diagnose(client: YouTubeClient, settings: Settings) -> None:
         else:
             verdict = f"ACCEPT  score {match.score} ({', '.join(match.reasons)})"
         print(f"{verdict}\n   title:   {video.title}\n   channel: {video.channel_title} "
-              f"[{video.channel_id}]\n   viewers: {video.concurrent_viewers}\n   id:      {video.video_id}\n")
+              f"[{video.channel_id}]\n   viewers: {video.concurrent_viewers}\n   id:      {video.video_id}")
+        if thumbnails is not None and video.is_live:
+            print(f"   thumbnail text: {thumb_text!r}")
+        print()
 
 
 if __name__ == "__main__":
@@ -224,12 +256,17 @@ if __name__ == "__main__":
     settings.require_youtube()
     if not settings.youtube_api_key.startswith("AIza"):
         print("Warning: YouTube API keys normally start with 'AIza'. Check YOUTUBE_API_KEY in .env.")
+    reader = None
+    if settings.thumbnail_ocr:
+        from .thumbnail import ThumbnailReader, make_engine
+        reader = ThumbnailReader(make_engine(settings.thumbnail_ocr_engine),
+                                 settings.thumbnail_ocr_max_per_check)
     try:
         if "--debug" in sys.argv:
-            diagnose(YouTubeClient(settings.youtube_api_key), settings)
+            diagnose(YouTubeClient(settings.youtube_api_key), settings, reader)
             sys.exit(0)
         found = find_live_streams(YouTubeClient(settings.youtube_api_key), settings,
-                                  run_search="--no-search" not in sys.argv)
+                                  run_search="--no-search" not in sys.argv, thumbnails=reader)
     except YouTubeError as exc:
         print(f"YouTube API error: {exc}")
         sys.exit(1)

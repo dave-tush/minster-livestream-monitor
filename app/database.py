@@ -42,6 +42,51 @@ CREATE TABLE IF NOT EXISTS current_state (
     video_id   TEXT,
     updated_at TEXT NOT NULL
 );
+
+-- What the transcript says about when the minister comes up to minister (one row per stream).
+CREATE TABLE IF NOT EXISTS transcript_checks (
+    video_id              TEXT PRIMARY KEY,
+    status                TEXT    NOT NULL,      -- none|mentioned|announced|welcomed|introduced|ministering
+    timestamp_seconds     INTEGER,               -- where to jump in the video
+    first_mention_seconds INTEGER,
+    evidence              TEXT    NOT NULL DEFAULT '',
+    announced_time        TEXT,
+    cues                  TEXT    NOT NULL DEFAULT '[]',
+    source_status         TEXT    NOT NULL,      -- ok|no_captions|blocked|unavailable|error
+    checks                INTEGER NOT NULL DEFAULT 0,
+    last_checked_at       TEXT    NOT NULL,
+    found_at              TEXT
+);
+
+-- Dominion Radio: one row per audio post in the Telegram channel (message_id is the
+-- channel's own increasing post number, so ORDER BY message_id = oldest upload first).
+CREATE TABLE IF NOT EXISTS radio_tracks (
+    message_id INTEGER PRIMARY KEY,
+    title      TEXT    NOT NULL,
+    performer  TEXT    NOT NULL DEFAULT '',
+    duration   INTEGER NOT NULL,                -- seconds
+    file_size  INTEGER NOT NULL DEFAULT 0,
+    mime_type  TEXT    NOT NULL DEFAULT 'audio/mpeg',
+    ext        TEXT    NOT NULL DEFAULT '.mp3',
+    posted_at  TEXT,
+    added_at   TEXT    NOT NULL,
+    available  INTEGER NOT NULL DEFAULT 1       -- 0 = download failed / removed, skipped
+);
+
+-- Small key/value notes for the radio (e.g. which Telegram channel the saved tracks came from).
+CREATE TABLE IF NOT EXISTS radio_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+-- Single row: which track is on air, when it started, and how far we have synced the channel.
+CREATE TABLE IF NOT EXISTS radio_state (
+    id             INTEGER PRIMARY KEY CHECK (id = 1),
+    message_id     INTEGER,
+    started_at     TEXT,
+    last_synced_id INTEGER NOT NULL DEFAULT 0,
+    updated_at     TEXT NOT NULL
+);
 """
 
 
@@ -79,6 +124,8 @@ class Database:
             if conn.execute("SELECT 1 FROM current_state WHERE id = 1").fetchone() is None:
                 conn.execute("INSERT INTO current_state (id, status, video_id, updated_at) "
                              "VALUES (1, 'offline', NULL, ?)", (utcnow(),))
+            if conn.execute("SELECT 1 FROM radio_state WHERE id = 1").fetchone() is None:
+                conn.execute("INSERT INTO radio_state (id, updated_at) VALUES (1, ?)", (utcnow(),))
 
     # ---- writes ----------------------------------------------------------
     def record_live(self, video: LiveVideo, minister_name: str,
@@ -154,3 +201,128 @@ class Database:
             rows = conn.execute("SELECT * FROM livestreams ORDER BY detected_at DESC, id DESC LIMIT ?",
                                 (limit,)).fetchall()
         return [dict(r) for r in rows]
+
+
+    # ---- Dominion Radio ----------------------------------------------------
+    def radio_add_tracks(self, tracks: list[dict], last_synced_id: int) -> int:
+        """Insert new tracks (ignores ones we already have) and move the sync cursor. Returns #added."""
+        now = utcnow()
+        added = 0
+        with self._tx() as conn:
+            for t in tracks:
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO radio_tracks (message_id, title, performer, duration, "
+                    "file_size, mime_type, ext, posted_at, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (t["message_id"], t["title"], t.get("performer", ""), t["duration"],
+                     t.get("file_size", 0), t.get("mime_type", "audio/mpeg"), t.get("ext", ".mp3"),
+                     t.get("posted_at"), now))
+                added += cur.rowcount
+            conn.execute("UPDATE radio_state SET last_synced_id = MAX(last_synced_id, ?), updated_at = ? "
+                         "WHERE id = 1", (last_synced_id, now))
+        return added
+
+    def radio_get_state(self) -> dict:
+        with self._tx() as conn:
+            return dict(conn.execute("SELECT * FROM radio_state WHERE id = 1").fetchone())
+
+    def radio_set_state(self, message_id: int | None, started_at: str | None) -> None:
+        with self._tx() as conn:
+            conn.execute("UPDATE radio_state SET message_id = ?, started_at = ?, updated_at = ? "
+                         "WHERE id = 1", (message_id, started_at, utcnow()))
+
+    def radio_get_track(self, message_id: int) -> dict | None:
+        with self._tx() as conn:
+            row = conn.execute("SELECT * FROM radio_tracks WHERE message_id = ?", (message_id,)).fetchone()
+        return dict(row) if row else None
+
+    def radio_first_track(self) -> dict | None:
+        with self._tx() as conn:
+            row = conn.execute("SELECT * FROM radio_tracks WHERE available = 1 "
+                               "ORDER BY message_id LIMIT 1").fetchone()
+        return dict(row) if row else None
+
+    def radio_next_track(self, after_message_id: int) -> dict | None:
+        """The track after `after_message_id`, wrapping back to the first one at the end."""
+        with self._tx() as conn:
+            row = conn.execute("SELECT * FROM radio_tracks WHERE available = 1 AND message_id > ? "
+                               "ORDER BY message_id LIMIT 1", (after_message_id,)).fetchone()
+            if row is None:
+                row = conn.execute("SELECT * FROM radio_tracks WHERE available = 1 "
+                                   "ORDER BY message_id LIMIT 1").fetchone()
+        return dict(row) if row else None
+
+    def radio_total_seconds(self) -> int:
+        with self._tx() as conn:
+            return conn.execute("SELECT COALESCE(SUM(duration), 0) FROM radio_tracks "
+                                "WHERE available = 1").fetchone()[0]
+
+    def radio_set_available(self, message_id: int, available: bool) -> None:
+        with self._tx() as conn:
+            conn.execute("UPDATE radio_tracks SET available = ? WHERE message_id = ?",
+                         (1 if available else 0, message_id))
+
+    def radio_list_tracks(self, limit: int = 100, offset: int = 0) -> list[dict]:
+        with self._tx() as conn:
+            rows = conn.execute("SELECT * FROM radio_tracks WHERE available = 1 "
+                                "ORDER BY message_id LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+        return [dict(r) for r in rows]
+
+    def radio_count(self) -> int:
+        with self._tx() as conn:
+            return conn.execute("SELECT COUNT(*) FROM radio_tracks WHERE available = 1").fetchone()[0]
+
+    # ---- transcript / ministration timing ------------------------------------
+    def transcript_get(self, video_id: str) -> dict | None:
+        with self._tx() as conn:
+            row = conn.execute("SELECT * FROM transcript_checks WHERE video_id = ?", (video_id,)).fetchone()
+        if row is None:
+            return None
+        out = dict(row)
+        out["cues"] = json.loads(out["cues"] or "[]")
+        return out
+
+    def transcript_save(self, video_id: str, status: str, source_status: str, *,
+                        timestamp_seconds=None, first_mention_seconds=None, evidence="",
+                        announced_time=None, cues=None, keep_findings: bool = False) -> None:
+        """Upsert a check. keep_findings=True only counts the attempt (used when a later check found less)."""
+        now = utcnow()
+        with self._tx() as conn:
+            exists = conn.execute("SELECT 1 FROM transcript_checks WHERE video_id = ?", (video_id,)).fetchone()
+            if exists and keep_findings:
+                conn.execute("UPDATE transcript_checks SET checks = checks + 1, last_checked_at = ?, "
+                             "source_status = ? WHERE video_id = ?", (now, source_status, video_id))
+            elif exists:
+                conn.execute(
+                    "UPDATE transcript_checks SET status = ?, timestamp_seconds = ?, first_mention_seconds = ?, "
+                    "evidence = ?, announced_time = ?, cues = ?, source_status = ?, checks = checks + 1, "
+                    "last_checked_at = ?, found_at = ? WHERE video_id = ?",
+                    (status, timestamp_seconds, first_mention_seconds, evidence, announced_time,
+                     json.dumps(cues or []), source_status, now, now if status != "none" else None, video_id))
+            else:
+                conn.execute(
+                    "INSERT INTO transcript_checks (video_id, status, timestamp_seconds, first_mention_seconds, "
+                    "evidence, announced_time, cues, source_status, checks, last_checked_at, found_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                    (video_id, status, timestamp_seconds, first_mention_seconds, evidence, announced_time,
+                     json.dumps(cues or []), source_status, now, now if status != "none" else None))
+
+    def radio_meta_get(self, key: str) -> str | None:
+        with self._tx() as conn:
+            row = conn.execute("SELECT value FROM radio_meta WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def radio_meta_set(self, key: str, value: str) -> None:
+        with self._tx() as conn:
+            conn.execute("INSERT INTO radio_meta (key, value) VALUES (?, ?) "
+                         "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
+
+    def radio_has_tracks(self) -> bool:
+        with self._tx() as conn:
+            return conn.execute("SELECT 1 FROM radio_tracks LIMIT 1").fetchone() is not None
+
+    def radio_reset(self) -> None:
+        """Forget every saved track and the on-air position (used when the Telegram channel changes)."""
+        with self._tx() as conn:
+            conn.execute("DELETE FROM radio_tracks")
+            conn.execute("UPDATE radio_state SET message_id = NULL, started_at = NULL, "
+                         "last_synced_id = 0, updated_at = ? WHERE id = 1", (utcnow(),))

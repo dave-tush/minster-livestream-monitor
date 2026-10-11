@@ -1,5 +1,6 @@
 """FastAPI application."""
 import asyncio
+import html
 import logging
 import secrets
 from contextlib import asynccontextmanager
@@ -7,9 +8,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from .config import Settings
+from .config import ENV_OVERRIDES, Settings
 from .database import Database
 from .monitor import Monitor
+from .radio import RadioEngine, TelethonSource
+from .radio_routes import build_radio_router
+from .thumbnail import ThumbnailReader, make_engine
+from .transcript import YouTubeCaptions
 from .wordpress import WordPressClient
 from .youtube import YouTubeClient, YouTubeError
 
@@ -45,6 +50,7 @@ HOME_PAGE = """<!doctype html>
       <span class="badge __BADGE_CLASS__"><span class="dot"></span>Server is running</span>
       <h1>Minister Livestream Monitor</h1>
       <p>__MONITOR_TEXT__ Check <code>/health</code> for the health endpoint.</p>
+      __RADIO_LINK__
     </main>
   </body>
 </html>"""
@@ -57,15 +63,20 @@ def setup_logging() -> None:
 
 
 def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
-               background: bool | None = None) -> FastAPI:
+               background: bool | None = None, radio: RadioEngine | None = None) -> FastAPI:
     """Factory. Tests inject `settings`/`monitor` (no background loop unless background=True);
     production builds everything from the environment and runs the loop."""
     run_background = (monitor is None) if background is None else background
+    run_radio = (radio is None) if background is None else background   # tests inject a radio and drive it by hand
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         setup_logging()
         cfg = settings or Settings.from_env()
+        if settings is None and ENV_OVERRIDES:
+            log.warning("These variables were already set in your terminal with different values; "
+                        "the .env file was used instead: %s. To clear them from the terminal run: unset %s",
+                        ", ".join(ENV_OVERRIDES), " ".join(ENV_OVERRIDES))
         mon = monitor
         if mon is None and cfg.minister_name and cfg.youtube_api_key:
             db = Database(cfg.database_url)
@@ -76,7 +87,19 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
                 log.info("WordPress integration enabled: %s", cfg.wordpress_url)
             else:
                 log.warning("WordPress integration DISABLED (set WORDPRESS_URL and WORDPRESS_API_KEY).")
-            mon = Monitor(cfg, db, YouTubeClient(cfg.youtube_api_key), wordpress=wp)
+            reader = None
+            if cfg.thumbnail_ocr:
+                reader = ThumbnailReader(make_engine(cfg.thumbnail_ocr_engine),
+                                         cfg.thumbnail_ocr_max_per_check)
+                log.info("Thumbnail verification enabled (engine: %s).", cfg.thumbnail_ocr_engine)
+            captions = None
+            if cfg.transcript_check:
+                captions = YouTubeCaptions(cfg.transcript_languages)
+                log.info("Transcript check enabled (every %ss, %s).", cfg.transcript_interval_seconds,
+                         "after the thumbnail confirms the minister" if cfg.transcript_require_thumbnail
+                         else "for every matched stream")
+            mon = Monitor(cfg, db, YouTubeClient(cfg.youtube_api_key), wordpress=wp, thumbnails=reader,
+                          transcripts=captions)
         app.state.settings = cfg
         app.state.monitor = mon
 
@@ -89,17 +112,33 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
                 log.info("Resuming tracked stream from a previous run: '%s' (%s). "
                          "Delete data/monitor.db to start fresh.", saved["title"], saved["video_id"])
 
+        # ---- Dominion Radio (optional: needs the TELEGRAM_* settings) ----
+        rad = radio
+        if rad is None and cfg.radio_configured:
+            rdb = mon.db if mon else Database(cfg.database_url)
+            rdb.init_schema()
+            rad = RadioEngine(cfg, rdb, TelethonSource(cfg.telegram_api_id, cfg.telegram_api_hash,
+                                                       cfg.telegram_session_string, cfg.telegram_channel))
+            log.info("Radio enabled: %s (channel %s)", cfg.radio_name, cfg.telegram_channel)
+        elif rad is None:
+            log.warning("Radio DISABLED (set TELEGRAM_API_ID, TELEGRAM_API_HASH, "
+                        "TELEGRAM_SESSION_STRING and TELEGRAM_CHANNEL).")
+        app.state.radio = rad
+
         stop = asyncio.Event()
         task = asyncio.create_task(mon.run_forever(stop)) if (run_background and mon) else None
+        radio_task = asyncio.create_task(rad.run_forever(stop)) if (rad and run_radio) else None
         yield
-        if task:
-            stop.set()
-            try:
-                await asyncio.wait_for(task, timeout=10)
-            except asyncio.TimeoutError:
-                task.cancel()
+        stop.set()
+        for t in (task, radio_task):
+            if t:
+                try:
+                    await asyncio.wait_for(t, timeout=10)
+                except asyncio.TimeoutError:
+                    t.cancel()
 
     app = FastAPI(title="Minister Livestream Monitor", lifespan=lifespan)
+    app.include_router(build_radio_router())
 
     def require_admin(request: Request, x_api_key: str | None) -> None:
         expected = request.app.state.settings.admin_api_key
@@ -111,10 +150,15 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
     def home(request: Request):
         if request.app.state.monitor is not None:
-            badge, text = "", "Monitoring is active."
+            badge = ""
+            text = f"Monitoring is active for: <strong>{html.escape(request.app.state.settings.minister_name)}</strong>."
         else:
             badge, text = "warn", "Monitoring is NOT configured yet (missing MINISTER_NAME or YOUTUBE_API_KEY)."
-        return HOME_PAGE.replace("__BADGE_CLASS__", badge).replace("__MONITOR_TEXT__", text)
+        rad = request.app.state.radio
+        link = (f'<p style="margin-top:14px"><a href="/radio">&#127911; Listen to '
+                f'{html.escape(rad.settings.radio_name)}</a></p>') if rad else ""
+        return (HOME_PAGE.replace("__BADGE_CLASS__", badge).replace("__MONITOR_TEXT__", text)
+                .replace("__RADIO_LINK__", link))
 
     @app.api_route("/health", methods=["GET", "HEAD"])
     def health():
@@ -128,7 +172,7 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
         current = mon.db.get_current()
         if not current:
             return {"status": "offline"}
-        return {
+        payload = {
             "status": "live",
             "video_id": current["video_id"],
             "title": current["title"],
@@ -138,6 +182,9 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
             "thumbnail_url": current["thumbnail_url"],
             "started_at": current["started_at"],
         }
+        if mon.transcripts is not None:       # only present when the transcript check is on
+            payload["ministration"] = mon.ministration_for(current)
+        return payload
 
     # Sync `def` on purpose: FastAPI runs it in a worker thread, so the blocking
     # YouTube/SQLite calls don't stall the event loop.

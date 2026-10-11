@@ -12,6 +12,7 @@ Per pass:
      and the state is re-sent every WORDPRESS_RESYNC_SECONDS as a heartbeat.
 """
 import asyncio
+import json
 import logging
 import threading
 import time
@@ -19,6 +20,7 @@ from datetime import datetime, timedelta
 
 from .config import Settings
 from .database import Database
+from .transcript import STATUS_RANK, Ministration, analyze
 from .wordpress import WordPressClient, WordPressError
 from .youtube import PACIFIC, YouTubeClient, YouTubeError, YouTubeQuotaError, find_live_streams
 
@@ -43,11 +45,16 @@ def seconds_until_quota_reset(now: datetime | None = None) -> float:
 
 class Monitor:
     def __init__(self, settings: Settings, db: Database, youtube: YouTubeClient,
-                 wordpress: WordPressClient | None = None, clock=time.monotonic):
+                 wordpress: WordPressClient | None = None, clock=time.monotonic, thumbnails=None,
+                 transcripts=None):
         self.settings = settings
         self.db = db
         self.youtube = youtube
         self.wordpress = wordpress
+        self.thumbnails = thumbnails        # ThumbnailReader or None (thumbnail verification off)
+        self.transcripts = transcripts      # YouTubeCaptions or None (transcript check off)
+        self._remembered_ids: list[str] = []   # live candidates from the last search, re-checked each pass
+        self._transcript_next: dict[str, float] = {}    # video_id -> earliest time of the next check
         self._clock = clock
         self._last_search: float | None = None
         self._wp_synced: str | None = None       # what WordPress last confirmed: "offline" | "live:<id>"
@@ -99,6 +106,7 @@ class Monitor:
                 self.db.touch(current["video_id"])
                 log.info("Still live: '%s' [%s] (%s)", current["title"],
                          current["channel_title"], current["video_id"])
+                self._transcript_pass(current)
                 return self._result("still_live")
             self.db.mark_ended(current["video_id"])
             log.info("Livestream ended.")
@@ -106,7 +114,11 @@ class Monitor:
             action = "ended"
 
         run_search = force_search or self._search_due()
-        found = find_live_streams(self.youtube, self.settings, run_search=run_search)
+        live_ids: list[str] = []
+        found = find_live_streams(self.youtube, self.settings, run_search=run_search,
+                                  thumbnails=self.thumbnails, remembered_ids=self._remembered_ids,
+                                  live_ids_out=live_ids)
+        self._remembered_ids = live_ids
         if run_search:
             self._last_search = self._clock()
 
@@ -122,14 +134,78 @@ class Monitor:
                 log.info("  - %s '%s' [%s] score %s, %s viewers", v.video_id, v.title,
                          v.channel_title, m.score, v.concurrent_viewers)
             log.info("Chose %s. Set TRUSTED_CHANNEL_IDS to pin the official channel.", video.video_id)
-        _, is_new = self.db.record_live(video, self.settings.minister_name,
-                                        match.score, match.reasons)
+        row, is_new = self.db.record_live(video, self.settings.minister_name,
+                                          match.score, match.reasons)
         if is_new:
             log.info("Livestream detected.")
             log.info("Minister: %s", self.settings.minister_name)
             log.info("Channel: %s", video.channel_title)
             log.info("Video ID: %s", video.video_id)
+        self._transcript_pass(row)
         return self._result("detected")
+
+    # ---- transcript: when does the minister come up? ---------------------
+    def _transcript_pass(self, row: dict) -> None:
+        """Read the transcript of a confirmed stream and note when the minister is introduced.
+
+        Rate-limited, and it never raises: a transcript problem must not break a monitoring pass.
+        """
+        if self.transcripts is None:
+            return
+        try:
+            self._transcript_pass_unsafe(row)
+        except Exception as exc:
+            log.warning("Transcript check failed: %s: %s", type(exc).__name__, exc)
+
+    def _transcript_pass_unsafe(self, row: dict) -> None:
+        video_id = row["video_id"]
+        if self.settings.transcript_require_thumbnail:
+            reasons = json.loads(row.get("match_reasons") or "[]")
+            if not any(r.startswith("name on thumbnail") for r in reasons):
+                return                          # thumbnail has not confirmed the minister: don't spend effort
+        saved = self.db.transcript_get(video_id)
+        if saved and (saved["status"] == "ministering"
+                      or saved["checks"] >= self.settings.transcript_max_checks):
+            return
+        now = self._clock()
+        if now < self._transcript_next.get(video_id, 0):
+            return
+        self._transcript_next[video_id] = now + self.settings.transcript_interval_seconds
+
+        segments, source = self.transcripts.fetch(video_id)
+        names = [self.settings.minister_name, *self.settings.minister_aliases]
+        found = analyze(segments, names, self.settings.ministration_keywords) if segments else Ministration()
+
+        better = saved is None or found.rank > STATUS_RANK[saved["status"]]
+        if not better:                          # keep what we already know; just count this attempt
+            self.db.transcript_save(video_id, saved["status"] if saved else "none", source, keep_findings=True)
+            return
+        self.db.transcript_save(video_id, found.status, source, timestamp_seconds=found.timestamp_seconds,
+                                first_mention_seconds=found.first_mention_seconds, evidence=found.evidence,
+                                announced_time=found.announced_time, cues=found.cues)
+        if saved is None and found.status == "none":
+            log.info("Transcript check: nothing yet (%s).", source)
+        elif found.status != (saved["status"] if saved else "none"):
+            when = f" at {found.timestamp_seconds // 60}:{found.timestamp_seconds % 60:02d}" \
+                if found.timestamp_seconds is not None else ""
+            log.info("Transcript: %s %s%s. Heard: %r", self.settings.minister_name, found.status, when,
+                     found.evidence[:140])
+
+    def ministration_for(self, video: dict) -> dict:
+        """What /status reports about when the minister comes up (always safe to call)."""
+        saved = self.db.transcript_get(video["video_id"])
+        if saved is None:
+            return {"status": "pending"}
+        ts = saved["timestamp_seconds"]
+        return {
+            "status": saved["status"],
+            "timestamp_seconds": ts,
+            "watch_url": f"{video['youtube_url']}&t={ts}s" if ts is not None and "?" in video["youtube_url"] else None,
+            "evidence": saved["evidence"],
+            "announced_time": saved["announced_time"],
+            "source": saved["source_status"],
+            "last_checked_at": saved["last_checked_at"],
+        }
 
     # ---- WordPress sync --------------------------------------------------
     def _sync_wordpress(self) -> str:
