@@ -13,3 +13,29 @@ The web service can start without monitoring credentials for deployment checks.
 To enable livestream monitoring, configure `MINISTER_NAME` and
 `YOUTUBE_API_KEY` in the Render environment variables. See `.env.example` for
 the other optional settings.
+
+## Dominion Radio — single process and crash recovery
+
+Dominion Radio (the 24/7 station built from Telegram audio posts) keeps the
+on-air pointer in `radio_state` (SQLite) and is designed to run as a **single
+process with a single Uvicorn worker** against one SQLite file, which is how
+the Render deployment works. The engine serialises all on-air pointer,
+checkpoint and track-transition writes with one in-process lock and relies on
+SQLite for atomic state persistence; there is no cross-process locking, so do
+not run multiple workers of this service against the same database file.
+
+Playback position is checkpointed to `radio_state` (`position_seconds`,
+`checkpoint_at`) roughly every five seconds. Positions are persisted with
+sub-second fractional precision (REAL values stored in the existing column;
+integer positions from older databases restore unchanged), and server downtime
+does not advance playback. After a restart the station resumes the saved
+track at the last checkpoint. The `/radio/now` response is unchanged —
+existing WordPress and backend players keep working without changes. If you
+ever point the app at an existing database, `position_seconds` /
+`checkpoint_at` are added by an idempotent migration on startup. Rows saved
+before checkpointing existed have `checkpoint_at = NULL`; on first playback
+access they are bootstrapped deterministically: the saved track restarts at
+position 0 with `started_at` and `checkpoint_at` set to the current time, and
+the true pre-upgrade playback position cannot be recovered. After
+bootstrapping, subsequent calls resume normally and server downtime is
+excluded from playback progression.

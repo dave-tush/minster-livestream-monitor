@@ -75,6 +75,89 @@ def test_cors_allows_wordpress_origin(env):
     assert "OPTIONS" in response.headers["access-control-allow-methods"]
 
 
+def test_cors_get_response_headers(env):
+    """CORS headers must be present on actual GET responses, not just preflight."""
+    client, _, _ = env
+    response = client.get(
+        "/radio/now",
+        headers={"Origin": "https://toluwalogoagboola.org"},
+    )
+    assert response.status_code in (200, 503)  # 503 if radio not configured, but CORS headers still present
+    assert response.headers["access-control-allow-origin"] == "https://toluwalogoagboola.org"
+
+
+def test_cors_rejects_unapproved_origin(env):
+    """CORS must not echo back or allow unapproved origins."""
+    client, _, _ = env
+    response = client.options(
+        "/radio/now",
+        headers={
+            "Origin": "https://evil.example.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    # Unapproved origin: no ACAO header should be present
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_cors_allows_range_header(env):
+    """CORS must allow the Range header for audio seeking."""
+    client, _, _ = env
+    response = client.options(
+        "/radio/audio/1",
+        headers={
+            "Origin": "https://toluwalogoagboola.org",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Range",
+        },
+    )
+    assert response.status_code == 200
+    assert "range" in response.headers["access-control-allow-headers"].lower()
+
+
+def test_cors_exposes_range_headers(env):
+    """CORS must expose Content-Range and Accept-Ranges to the browser on GET responses."""
+    client, _, _ = env
+    response = client.get(
+        "/radio/now",
+        headers={"Origin": "https://toluwalogoagboola.org"},
+    )
+    assert response.status_code in (200, 503)  # 503 if radio not configured
+    expose = response.headers.get("access-control-expose-headers", "")
+    assert "content-range" in expose.lower()
+    assert "accept-ranges" in expose.lower()
+
+
+def test_public_endpoints_no_auth(env):
+    """Public playback endpoints must work without any authentication headers."""
+    client, _, _ = env
+    # /radio/now — may return 503 if radio engine not configured, but must not return 401/403
+    r = client.get("/radio/now")
+    assert r.status_code in (200, 503)
+    assert r.status_code not in (401, 403)
+
+    # /radio/playlist — may return 503 if radio engine not configured, but must not return 401/403
+    r = client.get("/radio/playlist")
+    assert r.status_code in (200, 503)
+    assert r.status_code not in (401, 403)
+
+
+def test_sync_now_requires_admin_key(env):
+    """POST /radio/sync-now must reject missing or invalid admin keys."""
+    client, _, _ = env
+    # No key at all
+    r = client.post("/radio/sync-now")
+    assert r.status_code == 401
+
+    # Wrong key
+    r = client.post("/radio/sync-now", headers={"X-API-Key": "wrong"})
+    assert r.status_code == 401
+
+    # Correct key — auth passes, but radio engine not configured in test env
+    r = client.post("/radio/sync-now", headers={"X-API-Key": "secret"})
+    assert r.status_code == 503  # Radio engine not configured, but auth passed (not 401/403)
+
+
 def test_starts_without_monitoring_credentials():
     settings = Settings(minister_name="", youtube_api_key="")
     app = create_app(settings, background=False)

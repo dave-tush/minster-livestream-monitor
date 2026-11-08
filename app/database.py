@@ -85,7 +85,9 @@ CREATE TABLE IF NOT EXISTS radio_state (
     message_id     INTEGER,
     started_at     TEXT,
     last_synced_id INTEGER NOT NULL DEFAULT 0,
-    updated_at     TEXT NOT NULL
+    updated_at     TEXT NOT NULL,
+    position_seconds INTEGER NOT NULL DEFAULT 0,
+    checkpoint_at  TEXT
 );
 """
 
@@ -121,11 +123,20 @@ class Database:
         with self._tx() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(SCHEMA)
+            self._migrate_radio_state(conn)
             if conn.execute("SELECT 1 FROM current_state WHERE id = 1").fetchone() is None:
                 conn.execute("INSERT INTO current_state (id, status, video_id, updated_at) "
                              "VALUES (1, 'offline', NULL, ?)", (utcnow(),))
             if conn.execute("SELECT 1 FROM radio_state WHERE id = 1").fetchone() is None:
                 conn.execute("INSERT INTO radio_state (id, updated_at) VALUES (1, ?)", (utcnow(),))
+
+    def _migrate_radio_state(self, conn) -> None:
+        """Add position_seconds and checkpoint_at columns to existing radio_state tables."""
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(radio_state)")}
+        if "position_seconds" not in cols:
+            conn.execute("ALTER TABLE radio_state ADD COLUMN position_seconds INTEGER NOT NULL DEFAULT 0")
+        if "checkpoint_at" not in cols:
+            conn.execute("ALTER TABLE radio_state ADD COLUMN checkpoint_at TEXT")
 
     # ---- writes ----------------------------------------------------------
     def record_live(self, video: LiveVideo, minister_name: str,
@@ -225,10 +236,13 @@ class Database:
         with self._tx() as conn:
             return dict(conn.execute("SELECT * FROM radio_state WHERE id = 1").fetchone())
 
-    def radio_set_state(self, message_id: int | None, started_at: str | None) -> None:
+    def radio_set_state(self, message_id: int | None, started_at: str | None,
+                        position_seconds: float | int = 0, checkpoint_at: str | None = None) -> None:
         with self._tx() as conn:
-            conn.execute("UPDATE radio_state SET message_id = ?, started_at = ?, updated_at = ? "
-                         "WHERE id = 1", (message_id, started_at, utcnow()))
+            conn.execute(
+                "UPDATE radio_state SET message_id = ?, started_at = ?, position_seconds = ?, "
+                "checkpoint_at = ?, updated_at = ? WHERE id = 1",
+                (message_id, started_at, position_seconds, checkpoint_at, utcnow()))
 
     def radio_get_track(self, message_id: int) -> dict | None:
         with self._tx() as conn:
@@ -325,4 +339,5 @@ class Database:
         with self._tx() as conn:
             conn.execute("DELETE FROM radio_tracks")
             conn.execute("UPDATE radio_state SET message_id = NULL, started_at = NULL, "
-                         "last_synced_id = 0, updated_at = ? WHERE id = 1", (utcnow(),))
+                         "last_synced_id = 0, position_seconds = 0, checkpoint_at = NULL, "
+                         "updated_at = ? WHERE id = 1", (utcnow(),))
