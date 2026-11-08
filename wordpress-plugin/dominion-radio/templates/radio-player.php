@@ -6,6 +6,17 @@
  * frontend JavaScript (assets/js/dominion-radio.js) which polls the
  * Python backend /radio/now endpoint. All IDs are replaced with classes
  * so multiple shortcode instances on one page are safe.
+ *
+ * Layout (compact, ministry inner-page style):
+ *   1. Station identity — small Apostle photograph + "Listen Live" heading
+ *      with supporting message, plus a live/not-live status dot.
+ *   2. Main audio player — play/pause, track title/performer, progress bar
+ *      with seeking, volume/mute, elapsed time, offline/error state.
+ *   3. Compact "Up next" — next track title and performer only (populated
+ *      from the /radio/now "next" field; hidden when unavailable).
+ *
+ * The full playlist presentation has been removed. Backend playlist
+ * sequencing is unchanged.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -16,30 +27,30 @@ $backend_url = esc_attr( isset( $backend_url ) ? $backend_url : '' );
 $autoplay    = esc_attr( isset( $autoplay ) ? $autoplay : '0' );
 $name        = esc_attr( isset( $name ) ? $name : 'Dominion Radio' );
 $label       = esc_attr( isset( $label ) ? $label : 'Dominion Radio' );
-$tagline     = esc_attr( isset( $tagline ) ? $tagline : 'A Sound of Worship' );
+$tagline     = esc_attr( isset( $tagline ) ? $tagline : 'Worship, the Word and prayer, wherever you are.' );
 $offline_msg = esc_attr( isset( $offline_msg ) ? $offline_msg : '' );
 $apostle_img = esc_url( isset( $apostle_image ) ? $apostle_image : '' );
 ?>
 
 <!-- ============================================================
-     Dominion Radio — Hero / Station Identity
+     Dominion Radio — Station Identity
      ============================================================ -->
-<section class="dr-hero" aria-label="<?php echo $name; ?>">
-	<div class="dr-hero__overlay"></div>
-	<?php if ( $apostle_img ): ?>
-		<img src="<?php echo $apostle_img; ?>" alt="<?php echo esc_attr( $name ); ?>" class="dr-hero__image" loading="lazy" fetchpriority="high">
-	<?php endif; ?>
-	<div class="dr-hero__content">
-		<span class="dr-hero__eyebrow"><?php echo esc_html( $label ); ?></span>
-		<h1 class="dr-hero__title"><?php echo esc_html( $name ); ?></h1>
-		<p class="dr-hero__tagline"><?php echo esc_html( $tagline ); ?></p>
-
-		<div class="dr-hero__status">
-			<span class="dr-hero__status-dot" aria-hidden="true"></span>
-			<span class="dr-hero__status-text">Loading&hellip;</span>
+<div class="dr-identity" aria-label="<?php echo $name; ?>">
+	<div class="dr-identity__group">
+		<?php if ( $apostle_img ): ?>
+			<img src="<?php echo $apostle_img; ?>" alt="<?php echo esc_attr( $name ); ?>" class="dr-identity__image" loading="lazy" fetchpriority="high">
+		<?php endif; ?>
+		<div class="dr-identity__text">
+			<span class="dr-identity__eyebrow"><?php echo esc_html( $label ); ?></span>
+			<h1 class="dr-identity__title">Listen Live</h1>
+			<p class="dr-identity__tagline"><?php echo esc_html( $tagline ); ?></p>
 		</div>
 	</div>
-</section>
+	<div class="dr-identity__status">
+		<span class="dr-identity__status-dot" aria-hidden="true"></span>
+		<span class="dr-identity__status-text">Loading&hellip;</span>
+	</div>
+</div>
 
 <!-- ============================================================
      Dominion Radio — Player
@@ -53,15 +64,6 @@ $apostle_img = esc_url( isset( $apostle_image ) ? $apostle_image : '' );
 			<p class="dr-player__performer"></p>
 		</div>
 
-		<!-- Visualizer placeholder -->
-		<div class="dr-player__visualizer" aria-hidden="true">
-			<div class="dr-visualizer__bar"></div>
-			<div class="dr-visualizer__bar"></div>
-			<div class="dr-visualizer__bar"></div>
-			<div class="dr-visualizer__bar"></div>
-			<div class="dr-visualizer__bar"></div>
-		</div>
-
 		<!-- Controls -->
 		<div class="dr-player__controls">
 			<button type="button" class="dr-btn dr-btn--play" aria-label="Play" aria-pressed="false">
@@ -69,16 +71,12 @@ $apostle_img = esc_url( isset( $apostle_image ) ? $apostle_image : '' );
 				<svg class="dr-icon dr-icon--pause" viewBox="0 0 24 24" aria-hidden="true" hidden><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg>
 			</button>
 
-			<div class="dr-player__progress-wrap">
-				<div class="dr-player__progress">
-					<div class="dr-player__progress-fill"></div>
-					<div class="dr-player__progress-handle"></div>
-				</div>
-				<div class="dr-player__times">
-					<span class="dr-player__time">0:00</span>
-					<span class="dr-player__time">0:00</span>
-				</div>
+			<div class="dr-player__progress">
+				<div class="dr-player__progress-fill"></div>
+				<div class="dr-player__progress-handle"></div>
 			</div>
+
+			<span class="dr-player__time">0:00</span>
 
 			<button type="button" class="dr-btn dr-btn--mute" aria-label="Mute" aria-pressed="false">
 				<svg class="dr-icon dr-icon--vol" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a8 8 0 0 1 0 11"/></svg>
@@ -86,17 +84,11 @@ $apostle_img = esc_url( isset( $apostle_image ) ? $apostle_image : '' );
 			</button>
 		</div>
 
-		<!-- Next track -->
-		<div class="dr-player__next">
+		<!-- Next track (compact) -->
+		<div class="dr-player__next" hidden>
 			<span class="dr-player__next-label">Up next</span>
 			<span class="dr-player__next-title"></span>
-		</div>
-
-		<!-- Station stats -->
-		<div class="dr-player__stats">
-			<span class="dr-player__stat">-- tracks</span>
-			<span class="dr-player__stat-separator">&middot;</span>
-			<span class="dr-player__stat">--</span>
+			<span class="dr-player__next-performer"></span>
 		</div>
 
 	</div>
@@ -115,18 +107,4 @@ $apostle_img = esc_url( isset( $apostle_image ) ? $apostle_image : '' );
 	<audio class="dr-audio" preload="none" crossorigin="anonymous"></audio>
 </section>
 
-<!-- ============================================================
-     Dominion Radio — Playlist
-     ============================================================ -->
-<section class="dr-playlist" aria-label="Playlist">
-	<h2 class="dr-playlist__heading">
-		<span class="dr-playlist__eyebrow">Playlist</span>
-		<span class="dr-playlist__count">--</span>
-	</h2>
-	<div class="dr-playlist__list">
-		<!-- Tracks injected by JavaScript -->
-	</div>
-	<div class="dr-playlist__empty" hidden>
-		<p>No tracks available yet.</p>
-	</div>
-</section>
+</div>

@@ -22,7 +22,7 @@ class Dominion_Radio_Shortcode {
 			array(
 				'name'        => Dominion_Radio::station_name(),
 				'label'       => 'Dominion Radio',
-				'tagline'     => 'A Sound of Worship',
+				'tagline'     => 'Worship, the Word and prayer, wherever you are.',
 				'autoplay'    => 'no',
 				'offline'     => '',
 			),

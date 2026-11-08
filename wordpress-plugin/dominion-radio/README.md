@@ -12,16 +12,19 @@ other site functionality.
 
 ## What visitors see
 
-- A station identity hero with the Apostle's photograph
+- A compact station identity with the Apostle's photograph, "Listen Live"
+  heading and supporting message
 - Current track title and performer
-- Play / pause, mute, and playback progress
-- "Up next" track information
-- Track count and server sync status
-- Playlist of available tracks
+- Play / pause, mute, and playback progress with seeking
+- Compact "Up next" track information (next track only)
 - Offline and error states with retry
 
 All listeners hear the same track at the same playback position, because the
 Python backend maintains one shared playback timeline.
+
+The full playlist presentation has been removed from the visible player. The
+backend playlist — ordering, sequencing, looping and playback transitions —
+remains fully functional and unchanged.
 
 ---
 
@@ -101,7 +104,7 @@ Optional shortcode attributes:
 |---|---|---|
 | `name` | "Dominion Radio" | Station name shown in the header |
 | `label` | "Dominion Radio" | Eyebrow label above the name |
-| `tagline` | "A Sound of Worship" | Supporting phrase under the name |
+| `tagline` | "Worship, the Word and prayer, wherever you are." | Supporting phrase under the name |
 | `autoplay` | "no" | "yes" to start muted playback (browser restrictions apply) |
 | `offline` | (station-specific message) | Custom offline message |
 

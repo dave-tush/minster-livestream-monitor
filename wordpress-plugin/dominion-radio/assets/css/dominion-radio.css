@@ -1,22 +1,28 @@
 /* =====================================================================
-   Dominion Radio  |  Black & gold theme, matching the Minister Live player
-   Restyle by overriding the variables on .dr-radio (e.g. in Additional CSS).
+   Dominion Radio  |  Compact player, ministry inner-page style
+   Theme matched to the live Sermons page (https://toluwalogoagboola.org/sermons/)
    ===================================================================== */
 
 .dr-radio {
   --gold: #d4af37;
   --gold-light: #f0d17e;
-  --gold-dark: #a97e2f;
-  --deep: #100e0a;
-  --line: rgba(212, 175, 55, 0.22);
-  --text: #f5efe0;
-  --mute: #a99f88;
+  --gold-dark: #c9972e;
+  --gold-subtle: rgba(212, 175, 55, 0.06);
+  --gold-border: rgba(212, 175, 55, 0.28);
+  --charcoal: #1a1408;
+  --charcoal-dark: #0e0c09;
+  --charcoal-darker: #0b0a08;
+  --cream: #f5efe0;
+  --cream-muted: #b4aba9;
+  --surface: #FFFFFF;
+  --surface-soft: #f7f5f0;
+  --border: rgba(26, 20, 8, 0.12);
+  --text: #1a1408;
+  --mute: #6b6455;
   --live: #e5645a;
-  --grad: linear-gradient(135deg, #f0d17e, #d4af37 55%, #a97e2f);
   --serif: 'Playfair Display', Georgia, serif;
-  --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --dr-max-width: 1180px;
-  --dr-stage-width: 900px;
+  --sans: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --dr-max-width: 900px;
 
   position: relative;
   isolation: isolate;
@@ -28,7 +34,7 @@
   line-height: 1.5;
 }
 
-/* Reset box model within the component. */
+/* Reset box model within the component only. */
 .dr-radio *,
 .dr-radio *::before,
 .dr-radio *::after {
@@ -47,125 +53,154 @@
 }
 
 /* ============================================================
-     Hero / Station Identity
+     Station Identity (dark hero, matches Sermons hero)
      ============================================================ */
-.dr-hero {
+.dr-identity {
   position: relative;
-  max-width: var(--dr-stage-width);
-  margin: 0 auto 24px;
-  border-radius: 28px;
-  overflow: hidden;
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
-  border: 1px solid var(--line);
-  background: var(--deep);
-  min-height: 340px;
+  isolation: isolate;
   display: flex;
   align-items: center;
-}
-
-.dr-hero__overlay {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    180deg,
-    rgba(16, 14, 10, 0.35) 0%,
-    rgba(16, 14, 10, 0.78) 100%
-  );
-}
-
-.dr-hero__image {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center;
-  opacity: 0.85;
-}
-
-.dr-hero__content {
-  position: relative;
-  z-index: 2;
-  padding: clamp(24px, 4vw, 60px);
-  max-width: var(--dr-stage-width);
-  margin: 0 auto;
-  text-align: center;
-  color: var(--text);
-}
-
-.dr-hero__eyebrow {
-  display: block;
-  color: var(--gold);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 3px;
-  text-transform: uppercase;
-  margin-bottom: 12px;
-}
-
-.dr-hero__title {
-  font: 600 clamp(1.5rem, 4vw, 2.5rem) / 1.2 var(--serif);
-  color: var(--text);
-  margin: 0 0 12px;
-  overflow-wrap: anywhere;
-}
-
-.dr-hero__tagline {
-  font: 500 clamp(1rem, 2vw, 1.3rem) / 1.4 var(--sans);
-  color: var(--mute);
+  gap: 20px;
+  padding: 32px 28px;
+  border-radius: 20px;
   margin: 0 0 24px;
+  overflow: hidden;
+
+  /* Dark hero gradient matching Sermons hero */
+  background:
+    radial-gradient(70% 60% at 82% 18%, rgba(212, 175, 55, 0.16), rgba(0, 0, 0, 0) 62%),
+    radial-gradient(60% 55% at 8% 95%, rgba(169, 126, 47, 0.14), rgba(0, 0, 0, 0) 60%),
+    linear-gradient(180deg, #0e0c09 0%, #0b0a08 100%);
+  color: var(--cream);
+  border: 1px solid rgba(212, 175, 55, 0.18);
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(212, 175, 55, 0.1);
 }
 
-.dr-hero__status {
-  display: inline-flex;
+.dr-identity::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-conic-gradient(
+      from 200deg at 70% 20%,
+      rgba(240, 209, 126, 0.05) 0deg,
+      rgba(240, 209, 126, 0.05) 3deg,
+      transparent 3deg,
+      transparent 12deg
+    );
+  pointer-events: none;
+  z-index: 0;
+}
+
+.dr-identity__group {
+  display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 20px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--deep);
-  color: var(--mute);
+  gap: 20px;
+  flex: 1;
+  position: relative;
+  z-index: 1;
+}
+
+.dr-identity__image {
+  width: 150px;
+  height: 225px;
+  border-radius: 14px;
+  object-fit: cover;
+  object-position: center top;
+  background: #1a1408;
+  flex-shrink: 0;
+  border: 1px solid rgba(212, 175, 55, 0.15);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.dr-identity__text {
+  min-width: 0;
+}
+
+.dr-identity__eyebrow {
+  display: block;
+  color: var(--gold-light);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 2.5px;
   text-transform: uppercase;
+  margin: 0 0 8px;
 }
 
-.dr-hero__status-dot {
+.dr-identity__title {
+  font: 600 clamp(1.5rem, 3.5vw, 2.1rem) / 1.2 var(--serif);
+  color: var(--cream);
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.dr-identity__tagline {
+  font: 500 clamp(1rem, 2vw, 1.15rem) / 1.5 var(--sans);
+  color: var(--cream-muted);
+  margin: 0;
+}
+
+/* Status pill (live / not live) */
+.dr-identity__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  background: rgba(14, 12, 9, 0.6);
+  backdrop-filter: blur(8px);
+  color: var(--cream-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.dr-identity__status-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #6c6455;
+  background: #6b5d4a;
+  box-shadow: 0 0 0 rgba(229, 100, 90, 0);
 }
 
-.dr-hero__status--live {
+.dr-identity__status--live {
   color: var(--gold-light);
   border-color: rgba(212, 175, 55, 0.55);
+  background: rgba(229, 100, 90, 0.15);
 }
-.dr-hero__status--live .dr-hero__status-dot {
+.dr-identity__status--live .dr-identity__status-dot {
   background: var(--live);
+  box-shadow: 0 0 12px var(--live);
   animation: dr-pulse 2s infinite;
 }
 
 /* ============================================================
-     Player Card
+     Player Card (light surface, matches Sermons content cards)
      ============================================================ */
 .dr-player {
-  max-width: var(--dr-stage-width);
-  margin: 0 auto 32px;
+  margin: 0 0 24px;
 }
 
 .dr-player__card {
   position: relative;
-  border-radius: 24px;
-  border: 1px solid transparent;
-  background: linear-gradient(180deg, #1b1812, #110f0b) padding-box,
-              linear-gradient(160deg, rgba(240, 209, 126, 0.7), rgba(169, 126, 47, 0.2) 45%, rgba(240, 209, 126, 0.45)) border-box;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
-  padding: clamp(20px, 3vw, 36px);
+  border-radius: 16px;
+  border: 1px solid var(--gold-border);
+  background: var(--surface);
+  box-shadow:
+    0 12px 40px rgba(26, 20, 8, 0.08),
+    0 2px 8px rgba(26, 20, 8, 0.04);
+  padding: 24px 28px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 18px;
 }
 
 /* Track info */
@@ -174,38 +209,17 @@
 }
 
 .dr-player__track-title {
-  font: 600 clamp(1.25rem, 3vw, 2rem) / 1.28 var(--serif);
+  font: 600 clamp(1.2rem, 2.5vw, 1.7rem) / 1.28 var(--serif);
   color: var(--text);
-  margin: 0 0 6px;
+  margin: 0 0 8px;
   overflow-wrap: anywhere;
 }
 
 .dr-player__performer {
-  font: 500 clamp(0.95rem, 1.8vw, 1.1rem) / 1.4 var(--sans);
+  font: 500 clamp(0.95rem, 1.8vw, 1.1rem) / 1.5 var(--sans);
   color: var(--mute);
   margin: 0;
 }
-
-/* Visualizer (subtle audio-wave hint) */
-.dr-player__visualizer {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 32px;
-  opacity: 0.4;
-  transition: opacity 0.3s ease;
-}
-.dr-player__visualizer .dr-visualizer__bar {
-  width: 4px;
-  border-radius: 2px;
-  background: var(--gold);
-  animation: dr-eq 1.2s ease-in-out infinite;
-}
-.dr-visualizer__bar:nth-child(2) { animation-delay: 0.2s; }
-.dr-visualizer__bar:nth-child(3) { animation-delay: 0.4s; }
-.dr-visualizer__bar:nth-child(4) { animation-delay: 0.1s; }
-.dr-visualizer__bar:nth-child(5) { animation-delay: 0.3s; }
 
 /* Controls */
 .dr-player__controls {
@@ -213,62 +227,60 @@
   align-items: center;
   justify-content: center;
   gap: 14px;
-  margin-top: 8px;
 }
 
 .dr-btn {
-  width: 46px;
-  height: 46px;
+  width: 48px;
+  height: 48px;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  border: 0;
-  background: rgba(16, 14, 10, 0.72);
-  color: var(--gold-light);
-  transition: border-color 0.2s, background 0.2s, transform 0.15s;
+  border: 1px solid var(--gold-border);
+  background: var(--surface);
+  color: var(--charcoal);
+  transition: border-color 0.2s, background 0.2s, transform 0.15s, color 0.2s;
   -webkit-appearance: none;
   appearance: none;
 }
 .dr-btn:hover {
   border-color: var(--gold);
-  background: rgba(212, 175, 55, 0.16);
+  background: var(--gold-subtle);
+  color: var(--charcoal);
 }
 .dr-btn:active {
   transform: scale(0.94);
 }
 .dr-btn:focus-visible {
-  outline: 2px solid var(--gold-light);
+  outline: 2px solid var(--gold-dark);
   outline-offset: 2px;
 }
 .dr-btn.dr-btn--play {
-  width: 56px;
-  height: 56px;
-  background: var(--grad);
+  width: 60px;
+  height: 60px;
+  background: var(--gold);
   border-color: transparent;
-  color: var(--deep);
+  color: var(--charcoal-darker);
+  box-shadow: 0 6px 20px rgba(212, 175, 55, 0.35);
 }
 .dr-btn.dr-btn--play:hover {
-  background: var(--grad);
-  filter: brightness(1.08);
+  background: var(--gold-light);
+  color: var(--charcoal-darker);
 }
 .dr-btn.dr-btn--mute {
-  width: 40px;
-  height: 40px;
+  width: 42px;
+  height: 42px;
 }
 
 /* Progress bar */
-.dr-player__progress-wrap {
-  width: 100%;
-  max-width: var(--dr-stage-width);
-  margin: 0 auto;
-}
 .dr-player__progress {
   position: relative;
-  height: 6px;
-  background: #222a3d;
+  height: 7px;
+  background: #e8e0d0;
   border-radius: 99px;
   overflow: hidden;
   cursor: pointer;
+  flex: 1;
+  min-width: 140px;
 }
 .dr-player__progress-fill {
   position: absolute;
@@ -282,214 +294,197 @@
   position: absolute;
   top: 50%;
   left: 0%;
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   background: var(--gold);
   transform: translate(-50%, -50%);
   opacity: 0;
   transition: opacity 0.15s;
+  box-shadow: 0 2px 8px rgba(212, 175, 55, 0.4);
 }
 .dr-player__progress:hover .dr-player__progress-handle {
   opacity: 1;
 }
 
-.dr-player__times {
-  display: flex;
-  justify-content: space-between;
+/* Single elapsed time readout */
+.dr-player__time {
   color: var(--mute);
   font-size: 12px;
-  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--sans);
 }
 
-/* Next track */
+/* Next track (compact) */
 .dr-player__next {
-  max-width: var(--dr-stage-width);
-  margin: 0 auto;
-  padding-top: 8px;
-  color: var(--mute);
-  font-size: 0.875rem;
   display: flex;
   align-items: baseline;
   gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  color: var(--mute);
+  font-size: 0.875rem;
 }
 .dr-player__next-label {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 2px;
   text-transform: uppercase;
-  color: var(--gold);
+  color: var(--gold-dark);
 }
 .dr-player__next-title {
   font-weight: 500;
   color: var(--text);
   overflow-wrap: anywhere;
 }
-
-/* Stats */
-.dr-player__stats {
-  max-width: var(--dr-stage-width);
-  margin: 8px auto 0;
-  display: flex;
-  justify-content: center;
-  gap: 14px;
+.dr-player__next-performer {
+  font-size: 0.9rem;
   color: var(--mute);
-  font-size: 0.875rem;
-}
-.dr-player__stat-separator {
-  color: var(--line);
+  overflow-wrap: anywhere;
 }
 
 /* ============================================================
      Offline / error state
      ============================================================ */
 .dr-offline {
-  max-width: var(--dr-stage-width);
-  margin: 0 auto 32px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
-  padding: clamp(26px, 5vw, 52px) 20px;
+  gap: 16px;
+  padding: 32px 24px;
   text-align: center;
-  border: 1px dashed var(--line);
+  border: 1px dashed var(--gold-border);
   border-radius: 22px;
-  background: rgba(212, 175, 55, 0.03);
+  background: var(--gold-subtle);
 }
 .dr-offline__icon {
-  width: 54px;
-  height: 54px;
+  width: 56px;
+  height: 56px;
   fill: none;
-  stroke: var(--gold);
+  stroke: var(--gold-dark);
   stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
-  filter: drop-shadow(0 6px 18px rgba(212, 175, 55, 0.4));
 }
 .dr-offline__text {
   font-family: var(--serif);
-  font-size: clamp(1.05rem, 2.2vw, 1.35rem);
+  font-size: clamp(1.1rem, 2.5vw, 1.4rem);
   font-weight: 600;
   color: var(--text);
 }
 .dr-offline__sub {
   color: var(--mute);
-  font-size: 0.92rem;
-  max-width: 460px;
+  font-size: 0.95rem;
+  max-width: 480px;
 }
 
-/* ============================================================
-     Playlist
-     ============================================================ */
-.dr-playlist {
-  max-width: var(--dr-stage-width);
-  margin: 0 auto 48px;
+/* Primary button for retry */
+.dr-btn--main {
+  padding: 12px 28px;
+  border-radius: 999px;
+  border: 1px solid var(--gold);
+  background: var(--gold);
+  color: var(--charcoal-darker);
+  font-weight: 600;
+  font-size: 0.95rem;
+  transition: background 0.2s, color 0.2s, transform 0.1s;
 }
-.dr-playlist__heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 0 0 16px;
-  color: var(--text);
+.dr-btn--main:hover {
+  background: var(--gold-light);
 }
-.dr-playlist__eyebrow {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 3px;
-  text-transform: uppercase;
-  color: var(--gold);
+.dr-btn--main:active {
+  transform: scale(0.97);
 }
-.dr-playlist__count {
-  font-size: 11px;
-  color: var(--mute);
-  font-weight: 500;
-}
-.dr-playlist__list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.dr-playlist__track {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 12px 16px;
-  border-radius: 16px;
-  background: rgba(212, 175, 55, 0.03);
-  border: 1px solid transparent;
-  cursor: pointer;
-  transition: background 0.2s, border-color 0.2s;
-}
-.dr-playlist__track:hover {
-  background: rgba(212, 175, 55, 0.08);
-  border-color: var(--line);
-}
-.dr-playlist__track--current {
-  background: rgba(212, 175, 55, 0.12);
-  border-color: var(--gold);
-}
-.dr-playlist__track-number {
-  font-size: 0.875rem;
-  color: var(--mute);
-  min-width: 24px;
-}
-.dr-playlist__track-info {
-  flex: 1;
-  min-width: 0;
-}
-.dr-playlist__track-title {
-  font: 500 clamp(0.95rem, 1.8vw, 1rem) / 1.3 var(--serif);
-  color: var(--text);
-  margin: 0 0 2px;
-  overflow-wrap: anywhere;
-}
-.dr-playlist__track-performer {
-  font-size: 0.82rem;
-  color: var(--mute);
-  margin: 0;
-}
-.dr-playlist__track-duration {
-  font-size: 0.82rem;
-  color: var(--mute);
-  white-space: nowrap;
-}
-.dr-playlist__empty {
-  text-align: center;
-  color: var(--mute);
-  padding: 32px 20px;
+
+/* Ensure audio element is not visible but accessible. */
+.dr-radio audio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* ============================================================
      Responsive
      ============================================================ */
 @media (prefers-reduced-motion: reduce) {
-  .dr-hero__status--live .dr-hero__status-dot {
+  .dr-identity__status--live .dr-identity__status-dot {
     animation: none;
-  }
-  .dr-visualizer__bar {
-    animation: none;
-    opacity: 0.6;
   }
   .dr-player__progress-fill {
     transition: none;
   }
 }
 
-@media (max-width: 560px) {
-  .dr-hero {
-    border-radius: 20px;
-    min-height: 260px;
+/* Tablet */
+@media (max-width: 768px) {
+  .dr-identity {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 20px;
+    padding: 28px 22px;
+    text-align: center;
+    border-radius: 16px;
   }
-  .dr-hero__content {
-    padding: clamp(16px, 6vw, 40px);
+  .dr-identity__group {
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    width: 100%;
   }
-  .dr-hero__title {
-    font-size: clamp(1.3rem, 10vw, 1.9rem);
+  .dr-identity__image {
+    width: 110px;
+    height: 165px;
+    align-self: center;
+  }
+  .dr-identity__status {
+    align-self: center;
   }
   .dr-player__card {
-    padding: clamp(16px, 4vw, 24px);
+    padding: 20px 22px;
     gap: 16px;
+  }
+  .dr-btn.dr-btn--play {
+    width: 52px;
+    height: 52px;
+  }
+  .dr-btn {
+    width: 40px;
+    height: 40px;
+  }
+  .dr-btn.dr-btn--mute {
+    width: 38px;
+    height: 38px;
+  }
+}
+
+/* Mobile */
+@media (max-width: 560px) {
+  .dr-radio {
+    margin: 0 16px;
+  }
+  .dr-identity {
+    padding: 24px 18px;
+    border-radius: 14px;
+    gap: 16px;
+  }
+  .dr-identity__image {
+    width: 90px;
+    height: 135px;
+  }
+  .dr-identity__title {
+    font-size: clamp(1.3rem, 11vw, 1.7rem);
+  }
+  .dr-identity__tagline {
+    font-size: clamp(0.95rem, 4vw, 1.05rem);
+  }
+  .dr-player__card {
+    padding: 18px 20px;
+    gap: 15px;
+  }
+  .dr-player__controls {
+    gap: 12px;
   }
   .dr-btn.dr-btn--play {
     width: 48px;
@@ -503,9 +498,14 @@
     width: 36px;
     height: 36px;
   }
-  .dr-playlist__track {
-    padding: 10px 14px;
-    gap: 10px;
+  .dr-player__next {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    text-align: left;
+  }
+  .dr-offline {
+    padding: 24px 18px;
   }
 }
 
@@ -514,19 +514,6 @@
      ============================================================ */
 @keyframes dr-pulse {
   0% { box-shadow: 0 0 0 0 rgba(229, 100, 90, 0.6); }
-  70% { box-shadow: 0 0 0 8px rgba(229, 100, 90, 0); }
+  70% { box-shadow: 0 0 0 10px rgba(229, 100, 90, 0); }
   100% { box-shadow: 0 0 0 0 rgba(229, 100, 90, 0); }
-}
-@keyframes dr-eq {
-  0%, 100% { height: 16px; }
-  50% { height: 32px; }
-}
-
-/* Ensure audio element is not visible but accessible. */
-#dr-audio {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
 }

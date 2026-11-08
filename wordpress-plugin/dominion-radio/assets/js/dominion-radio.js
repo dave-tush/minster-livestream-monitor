@@ -12,7 +12,6 @@
   /* ---------- Constants ---------- */
 
   var POLL_INTERVAL_MS = 15000;       // How often we refresh /radio/now
-  var PLAYLIST_INTERVAL_MS = 60000;   // How often we refresh /radio/playlist
   var DRIFT_THRESHOLD_S = 5;          // Seconds of drift before we re-seek
   var REQUEST_TIMEOUT_MS = 10000;     // Fetch timeout
 
@@ -80,14 +79,15 @@
 
     var q = function (sel) { return root.querySelector(sel); };
 
-    // Element refs.
-    this.statusDot = q('.dr-hero__status-dot');
-    this.statusText = q('.dr-hero__status-text');
-    this.heroStatus = q('.dr-hero__status');
+    // Element refs — station identity status.
+    this.identityStatusDot = q('.dr-identity__status-dot');
+    this.identityStatusText = q('.dr-identity__status-text');
 
+    // Element refs — now playing info.
     this.trackTitleEl = q('.dr-player__track-title');
     this.performerEl = q('.dr-player__performer');
-    this.visualizer = q('.dr-player__visualizer');
+
+    // Element refs — controls.
     this.playBtn = q('.dr-btn--play');
     this.iconPlay = q('.dr-icon--play');
     this.iconPause = q('.dr-icon--pause');
@@ -97,27 +97,21 @@
     this.progress = q('.dr-player__progress');
     this.progressFill = q('.dr-player__progress-fill');
     this.progressHandle = q('.dr-player__progress-handle');
+
+    // Single elapsed time readout.
+    this.timeEl = q('.dr-player__time');
+
+    // Element refs — compact Up next (populated from /radio/now "next").
+    this.nextEl = q('.dr-player__next');
     this.nextLabel = q('.dr-player__next-label');
     this.nextTitle = q('.dr-player__next-title');
+    this.nextPerformer = q('.dr-player__next-performer');
 
-    // Two .dr-player__time elements (elapsed, remaining).
-    var times = root.querySelectorAll('.dr-player__time');
-    this.timeElapsed = times[0] || null;
-    this.timeRemaining = times[1] || null;
-
-    // Two .dr-player__stat elements (tracks, server).
-    var stats = root.querySelectorAll('.dr-player__stat');
-    this.statTracks = stats[0] || null;
-    this.statServer = stats[1] || null;
-
+    // Element refs — offline / retry.
     this.offline = q('.dr-offline');
     this.offlineText = q('.dr-offline__text');
     this.offlineSub = q('.dr-offline__sub');
     this.btnRetry = q('.dr-btn--main');
-
-    this.playlistCount = q('.dr-playlist__count');
-    this.playlistList = q('.dr-playlist__list');
-    this.playlistEmpty = q('.dr-playlist__empty');
 
     this.audio = q('.dr-audio');
 
@@ -134,7 +128,6 @@
     this.userHasInteracted = false;
     this.manualSeek = false;
     this.timer = null;
-    this.playlistTimer = null;
 
     this.bindPlayerUI();
     this.initAudio();
@@ -142,13 +135,11 @@
     var initialBackend = this.backendUrl;
     if (initialBackend) {
       this.loadNow();
-      this.loadPlaylist();
     } else {
       this.showOffline('Backend URL not configured.');
     }
 
     this.schedule();
-    this.schedulePlaylist();
   }
 
   /* ---------- Scheduling ---------- */
@@ -157,12 +148,6 @@
     var self = this;
     clearTimeout(this.timer);
     this.timer = setTimeout(function () { self.tick(); }, POLL_INTERVAL_MS);
-  };
-
-  Widget.prototype.schedulePlaylist = function () {
-    var self = this;
-    clearTimeout(this.playlistTimer);
-    this.playlistTimer = setTimeout(function () { self.loadPlaylist(); }, PLAYLIST_INTERVAL_MS);
   };
 
   /* ---------- Backend: /radio/now ---------- */
@@ -200,15 +185,15 @@
     var track = data.track;
     var isLive = data.status === 'live' && !!track.id;
 
-    // Update hero status.
+    // Update station identity status (live / not live).
     if (isLive) {
-      this.heroStatus.classList.add('dr-hero__status--live');
-      if (this.statusText) this.statusText.textContent = 'ON AIR';
-      if (this.statusDot) this.statusDot.style.background = '#e5645a';
+      this.identityStatusDot.parentElement.classList.add('dr-identity__status--live');
+      if (this.identityStatusText) this.identityStatusText.textContent = 'ON AIR';
+      if (this.identityStatusDot) this.identityStatusDot.style.background = '#e5645a';
     } else {
-      this.heroStatus.classList.remove('dr-hero__status--live');
-      if (this.statusText) this.statusText.textContent = 'NOT LIVE';
-      if (this.statusDot) this.statusDot.style.background = '#6c6455';
+      this.identityStatusDot.parentElement.classList.remove('dr-identity__status--live');
+      if (this.identityStatusText) this.identityStatusText.textContent = 'NOT LIVE';
+      if (this.identityStatusDot) this.identityStatusDot.style.background = '#6c6455';
     }
 
     // New track?
@@ -218,11 +203,10 @@
 
       if (this.trackTitleEl) this.trackTitleEl.textContent = track.title || 'Unknown Track';
       if (this.performerEl) this.performerEl.textContent = track.performer || '';
-      if (this.nextTitle) this.nextTitle.textContent = data.next ? data.next.title : '';
-      if (this.statTracks) this.statTracks.textContent = (data.tracks_in_rotation || 0) + ' tracks';
 
-      if (isLive) { this.visualizer.style.opacity = '1'; }
-      else { this.visualizer.style.opacity = '0.4'; }
+      // Compact Up next from the /radio/now "next" field (no playlist fetch).
+      var nextTrack = data.next || null;
+      this.renderNext(nextTrack);
 
       // Load audio source if changed.
       var audioUrl = absoluteUrl(this.backendUrl, track.audio_url);
@@ -240,15 +224,33 @@
 
       this.updateDisplay();
     } else {
-      // Same track: update position only.
+      // Same track: update position and Up next only.
       this.position = Math.max(0, (data.position || 0));
       this.duration = track.duration || 0;
-      if (this.nextTitle) this.nextTitle.textContent = data.next ? data.next.title : '';
-      if (this.statTracks) this.statTracks.textContent = (data.tracks_in_rotation || 0) + ' tracks';
+      var nextTrack = data.next || null;
+      this.renderNext(nextTrack);
       this.updateDisplay();
     }
 
     this.hideOffline();
+  };
+
+  Widget.prototype.renderNext = function (nextTrack) {
+    // Hide the Up next section entirely when there is no next track.
+    if (!this.nextEl || !nextTrack) {
+      if (this.nextEl) this.nextEl.hidden = true;
+      return;
+    }
+    if (this.nextEl) this.nextEl.hidden = false;
+    if (this.nextTitle) this.nextTitle.textContent = nextTrack.title || 'Unknown Track';
+    if (this.nextPerformer) {
+      this.nextPerformer.textContent = nextTrack.performer ? nextTrack.performer : '';
+      if (this.nextPerformer.textContent === '') {
+        this.nextPerformer.hidden = true;
+      } else {
+        this.nextPerformer.hidden = false;
+      }
+    }
   };
 
   /* ---------- Audio ---------- */
@@ -354,8 +356,7 @@
     if (pos > dur) pos = dur;
     if (pos < 0) pos = 0;
 
-    if (this.timeElapsed) this.timeElapsed.textContent = fmt(pos);
-    if (this.timeRemaining) this.timeRemaining.textContent = fmt(Math.max(0, dur - pos));
+    if (this.timeEl) this.timeEl.textContent = fmt(pos);
 
     var pct = dur > 0 ? (pos / dur) * 100 : 0;
     if (this.progressFill) this.progressFill.style.width = pct + '%';
@@ -369,46 +370,6 @@
         try { this.audio.currentTime = expected; } catch (e) {}
       }
     }
-  };
-
-  /* ---------- Backend: /radio/playlist ---------- */
-
-  Widget.prototype.loadPlaylist = function () {
-    var self = this;
-    if (!this.backendUrl) return;
-    var url = absoluteUrl(this.backendUrl, '/radio/playlist?limit=20&offset=0');
-
-    fetchJson(url, this.backendUrl)
-      .then(function (data) {
-        var tracks = data.tracks || [];
-        if (self.playlistCount) self.playlistCount.textContent = (data.total || 0) + ' tracks';
-
-        if (tracks.length === 0) {
-          if (self.playlistList) self.playlistList.style.display = 'none';
-          if (self.playlistEmpty) self.playlistEmpty.hidden = false;
-          return;
-        }
-        if (self.playlistEmpty) self.playlistEmpty.hidden = true;
-        if (self.playlistList) self.playlistList.style.display = 'block';
-
-        var html = '';
-        tracks.forEach(function (t, i) {
-          var isCurrent = self.currentId && t.id == self.currentId;
-          html +=
-            '<div class="dr-playlist__track' + (isCurrent ? ' dr-playlist__track--current' : '') + '">' +
-            '<span class="dr-playlist__track-number">' + (i + 1) + '</span>' +
-            '<div class="dr-playlist__track-info">' +
-            '<p class="dr-playlist__track-title">' + escapeHtml(t.title || 'Unknown Track') + '</p>' +
-            '<p class="dr-playlist__track-performer">' + escapeHtml(t.performer || '') + '</p>' +
-            '</div>' +
-            '<span class="dr-playlist__track-duration">' + fmt(t.duration || 0) + '</span>' +
-            '</div>';
-        });
-        self.playlistList.innerHTML = html;
-      })
-      .catch(function (err) {
-        log('Playlist fetch failed: ' + err.message);
-      });
   };
 
   /* ---------- UI states ---------- */
