@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dominion Radio — Concept C · Minimal Luxury</title>
+<link rel="stylesheet" href="assets/css/base.css">
+<link rel="stylesheet" href="assets/css/concept-c.css">
+</head>
+<body class="c-c">
+<header class="site-header"><a class="site-logo" href="#">ATA</a><ul class="site-nav"><li><a href="#">Home</a></li><li><a href="#">About</a></li><li><a href="#">Itinerary</a></li><li><a href="#">Live Stream</a></li><li><a href="#">Sermons</a></li><li><a href="#">Letters</a></li><li><a href="#">Testimonies</a></li><li><a href="#" aria-current="page">Radio</a></li></ul><button class="site-menu" aria-label="Menu"><svg viewBox="0 0 24 24"><path d="M4 8h16M4 16h16" stroke-linecap="round"/></svg></button></header>
+<main>
+<div class="dr-radio" data-backend-url="http://127.0.0.1:8765" data-autoplay="0" data-name="Dominion Radio" data-label="Dominion Radio" data-tagline="Worship, the Word and prayer, wherever you are." data-offline-msg="Dominion Radio is not on air right now.">
+<div class="dr-stage">
+  <div class="dr-masthead"><span class="dr-identity__eyebrow">Dominion Radio</span><div class="dr-identity__status"><span class="dr-identity__status-dot" aria-hidden="true"></span><span class="dr-identity__status-text">Loading&hellip;</span></div></div>
+  <figure class="dr-figure"><img src="https://toluwalogoagboola.org/wp-content/uploads/2026/10/Apostle-Toluwalogo-Agboola-Poster-1.png" onerror="this.onerror=null;this.src='assets/img/portrait-standin.png'" alt="Apostle Toluwalogo Agboola" class="dr-identity__image" width="800" height="1200" fetchpriority="high"></figure>
+  <div class="dr-identity" aria-label="Dominion Radio">
+    <h1 class="dr-identity__title">Listen <em>Live</em></h1>
+    <p class="dr-identity__tagline">Worship, the Word and prayer, wherever you are.</p>
+  </div>
+  <section class="dr-player" aria-label="Radio player">
+    <div class="dr-player__card">
+      <div class="dr-player__info">
+  <span class="dr-player__label">Now playing</span>
+  <h2 class="dr-player__track-title">Select a track</h2>
+  <p class="dr-player__performer"></p>
+</div>
+      <div class="dr-player__controls">
+  <button type="button" class="dr-btn dr-btn--play" aria-label="Play" aria-pressed="false"><svg class="dr-icon dr-icon--play" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.2 4.9v14.2a.6.6 0 0 0 .92.5l11-7.1a.6.6 0 0 0 0-1l-11-7.1a.6.6 0 0 0-.92.5z"/></svg><svg class="dr-icon dr-icon--pause" viewBox="0 0 24 24" aria-hidden="true" hidden><rect fill="currentColor" x="6.2" y="5" width="3.8" height="14" rx="1"/><rect fill="currentColor" x="14" y="5" width="3.8" height="14" rx="1"/></svg></button>
+  <div class="dr-player__progress" role="presentation"><div class="dr-player__progress-fill"></div><div class="dr-player__progress-handle"></div></div>
+  <span class="dr-player__time">0:00</span>
+  <button type="button" class="dr-btn dr-btn--mute" aria-label="Mute" aria-pressed="false"><svg class="dr-icon dr-icon--vol" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 9.5v5h3.4L12 18.5v-13L7.4 9.5z"/><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M15.6 9.2a4 4 0 0 1 0 5.6M18.2 6.6a7.6 7.6 0 0 1 0 10.8"/></svg><svg class="dr-icon dr-icon--muted" viewBox="0 0 24 24" aria-hidden="true" hidden><path fill="currentColor" d="M4 9.5v5h3.4L12 18.5v-13L7.4 9.5z"/><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M16 9.6l4.8 4.8M20.8 9.6L16 14.4"/></svg></button>
+</div>
+      <div class="dr-player__next" hidden>
+  <span class="dr-player__next-label">Up next</span>
+  <span class="dr-player__next-title"></span>
+  <span class="dr-player__next-performer"></span>
+</div>
+    </div>
+    <div class="dr-offline" hidden>
+  <p class="dr-offline__text">Dominion Radio is not on air right now.</p>
+  <p class="dr-offline__sub"></p>
+  <button type="button" class="dr-btn dr-btn--main">Try again</button>
+</div>
+<audio class="dr-audio" preload="none" crossorigin="anonymous"></audio>
+  </section>
+</div>
+</div>
+</main>
+<footer class="site-footer"><span>ATA</span><span>All rights reserved</span></footer>
+<div class="mock-note">Design preview · mock site chrome · portrait is a stand-in offline</div>
+<script src="assets/js/dominion-radio.preview.js"></script>
+</body></html>
