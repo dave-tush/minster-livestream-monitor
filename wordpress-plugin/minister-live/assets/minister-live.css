@@ -1,0 +1,212 @@
+/* =====================================================================
+   Minister Live  |  Black & gold theme, matching the Sermon Playlist Player
+   Restyle by overriding the variables on .ml-live (e.g. in Additional CSS).
+   ===================================================================== */
+.ml-live{
+  --gold:#d4af37; --gold-light:#f0d17e; --gold-dark:#a97e2f;
+  --deep:#100e0a; --line:rgba(212,175,55,.22);
+  --text:#f5efe0; --mute:#a99f88; --live:#e5645a;
+  --grad:linear-gradient(135deg,#f0d17e,#d4af37 55%,#a97e2f);
+  --serif:'Playfair Display',Georgia,serif;
+  --sans:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --ml-stage-width:900px;                 /* widest the player card gets */
+  position:relative;isolation:isolate;max-width:1180px;margin:1.5em auto;box-sizing:border-box;
+  padding:clamp(14px,2.4vw,30px);border-radius:28px;color:var(--text);font-family:var(--sans);line-height:1.5;
+  background:radial-gradient(ellipse 70% 50% at 85% 0%,rgba(212,175,55,.12),transparent 60%),
+             radial-gradient(ellipse 60% 50% at 0% 100%,rgba(169,126,47,.10),transparent 60%),
+             linear-gradient(180deg,#0f0d09,#0a0907);
+  border:1px solid var(--line);box-shadow:0 30px 80px rgba(0,0,0,.55);
+}
+.ml-live *,.ml-live *::before,.ml-live *::after{box-sizing:border-box}
+.ml-live [hidden]{display:none !important}
+.ml-live p{margin:0;padding:0}
+.ml-live button{font-family:inherit}
+
+/* ---------- Header: name, itinerary label, live status ---------- */
+.ml-live .ml-live__head{
+  display:flex;align-items:center;justify-content:space-between;gap:12px 18px;flex-wrap:wrap;
+  max-width:var(--ml-stage-width);margin:0 auto 18px;padding:0 4px;
+}
+.ml-live .ml-live__eyebrow{display:block;color:var(--gold);font-size:11px;font-weight:700;letter-spacing:3px;text-transform:uppercase}
+.ml-live .ml-live__name{margin:4px 0 0;font:600 clamp(1.35rem,3.2vw,2.1rem)/1.2 var(--serif);color:var(--text);overflow-wrap:anywhere}
+
+.ml-live .ml-live__status{
+  display:inline-flex;align-items:center;gap:9px;padding:8px 16px 8px 13px;border-radius:999px;white-space:nowrap;
+  background:var(--deep);border:1px solid var(--line);
+  color:var(--mute);font-size:11px;font-weight:700;letter-spacing:2.5px;line-height:1;
+}
+.ml-live .ml-live__dot{width:8px;height:8px;border-radius:50%;background:#6c6455}
+.ml-live .ml-live__status.is-live{color:var(--gold-light);border-color:rgba(212,175,55,.55)}
+.ml-live .ml-live__status.is-live .ml-live__dot{background:var(--live);animation:ml-pulse 2s infinite}
+
+/* ---------- Nothing live ---------- */
+.ml-live .ml-live__offline{
+  display:flex;flex-direction:column;align-items:center;gap:12px;max-width:var(--ml-stage-width);margin:0 auto;
+  padding:clamp(26px,5vw,52px) 20px;text-align:center;border:1px dashed var(--line);border-radius:22px;
+  background:rgba(212,175,55,.03);
+}
+.ml-live .ml-live__idle-icon{width:54px;height:54px;fill:none;stroke:var(--gold);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 6px 18px rgba(212,175,55,.4))}
+.ml-live .ml-live__offline-text{color:var(--text);font-family:var(--serif);font-size:clamp(1.05rem,2.2vw,1.35rem);font-weight:600}
+.ml-live .ml-live__offline-sub{color:var(--mute);font-size:.92rem;max-width:460px}
+
+/* ---------- Live: player card ---------- */
+.ml-live .ml-live__stage{
+  position:relative;max-width:var(--ml-stage-width);margin:0 auto;padding:clamp(14px,1.8vw,22px);border-radius:24px;border:1px solid transparent;
+  background:linear-gradient(180deg,#1b1812,#110f0b) padding-box,
+             linear-gradient(160deg,rgba(240,209,126,.7),rgba(169,126,47,.2) 45%,rgba(240,209,126,.45)) border-box;
+  box-shadow:0 24px 60px rgba(0,0,0,.5);
+}
+.ml-live .ml-live__frame{
+  position:relative;aspect-ratio:16/9;border-radius:16px;overflow:hidden;background:#050403;
+  border:1px solid var(--line);box-shadow:0 14px 40px rgba(0,0,0,.55),inset 0 0 0 1px rgba(0,0,0,.4);
+  user-select:none;-webkit-user-select:none;
+}
+@supports not (aspect-ratio:16/9){ .ml-live .ml-live__frame{height:0;padding-top:56.25%} }
+.ml-live .ml-live__frame:fullscreen{border-radius:0;border:0;aspect-ratio:auto;width:100%;height:100%}
+.ml-live .ml-live__frame:-webkit-full-screen{border-radius:0;border:0;aspect-ratio:auto;width:100%;height:100%}
+
+/* layer 1: the video itself (YouTube's own controls are switched off) */
+.ml-live .ml-live__yt{position:absolute;inset:0;z-index:1}
+.ml-live .ml-live__yt iframe{position:absolute;top:0;left:0;width:100%;height:100%;border:0;display:block;pointer-events:none}
+
+/* layer 2: our own cover screen (shown before play and while paused) */
+.ml-live .ml-live__poster{
+  position:absolute;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;
+  background:#050403 center/cover no-repeat;   /* appears instantly, so YouTube's own pause/end screens are never seen */
+}
+.ml-live .ml-live__poster::before{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(11,10,8,.35),rgba(11,10,8,.78))}
+.ml-live .ml-live__big{
+  position:relative;width:clamp(58px,11vw,88px);aspect-ratio:1/1;border-radius:50%;display:grid;place-items:center;
+  background:var(--grad);color:var(--deep);box-shadow:0 12px 40px rgba(212,175,55,.35),0 0 0 8px rgba(212,175,55,.14);
+  transition:transform .2s ease,opacity .2s ease;
+}
+.ml-live .ml-live__big svg{width:42%;height:42%;fill:currentColor;margin-left:6%}
+.ml-live .ml-live__shield:hover ~ .ml-live__poster .ml-live__big{transform:scale(1.06)}
+.ml-live .ml-live__frame.is-playing .ml-live__poster,
+.ml-live .ml-live__frame.is-buffering.is-played .ml-live__poster{opacity:0;visibility:hidden;transition:opacity .3s ease,visibility .3s}
+/* while paused, stopped or loading, the video layer is hidden entirely (this is where "more videos" would show) */
+.ml-live .ml-live__frame.is-paused .ml-live__yt,
+.ml-live .ml-live__frame.is-loading .ml-live__yt{opacity:0}
+.ml-live .ml-live__frame.is-buffering .ml-live__big,
+.ml-live .ml-live__frame.is-loading .ml-live__big{opacity:0}
+
+/* spinner */
+.ml-live .ml-live__spin{
+  position:absolute;z-index:3;top:50%;left:50%;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;
+  border:3px solid rgba(212,175,55,.25);border-top-color:var(--gold-light);animation:ml-spin .9s linear infinite;
+  opacity:0;visibility:hidden;pointer-events:none;
+}
+.ml-live .ml-live__frame.is-loading .ml-live__spin,
+.ml-live .ml-live__frame.is-buffering .ml-live__spin{opacity:1;visibility:visible}
+
+/* layer 3: invisible click-catcher. Blocks clicks from reaching YouTube and turns them into play/pause */
+.ml-live .ml-live__shield{
+  position:absolute;inset:0;z-index:4;width:100%;height:100%;margin:0;padding:0;border:0;border-radius:0;
+  background:transparent;cursor:pointer;-webkit-appearance:none;appearance:none;-webkit-tap-highlight-color:transparent;
+}
+.ml-live .ml-live__shield:focus-visible{outline:2px solid var(--gold-light);outline-offset:-4px}
+.ml-live .ml-live__frame.is-loading .ml-live__shield{cursor:progress}
+
+/* error message */
+.ml-live .ml-live__error{
+  position:absolute;inset:0;z-index:6;display:flex;align-items:center;justify-content:center;padding:20px;text-align:center;
+  background:rgba(8,7,5,.9);color:var(--gold-light);font:italic 500 1rem var(--serif);
+}
+
+/* layer 5: our own controls */
+.ml-live .ml-live__controls{
+  position:absolute;left:0;right:0;bottom:0;z-index:5;display:flex;align-items:center;gap:10px;
+  padding:34px clamp(10px,2vw,16px) clamp(10px,1.6vw,14px);
+  background:linear-gradient(0deg,rgba(8,7,5,.92),rgba(8,7,5,0));transition:opacity .25s ease;
+}
+.ml-live .ml-live__frame.is-playing.is-idle .ml-live__controls{opacity:0;pointer-events:none}
+.ml-live .ml-live__frame.is-playing.is-idle{cursor:none}
+.ml-live .ml-live__btn{
+  flex:0 0 auto;width:40px;height:40px;margin:0;padding:0;border-radius:50%;display:grid;place-items:center;cursor:pointer;
+  background:rgba(16,14,10,.72);border:1px solid var(--line);color:var(--gold-light);
+  transition:border-color .2s,background .2s,transform .15s;-webkit-appearance:none;appearance:none;
+}
+.ml-live .ml-live__btn:hover{border-color:var(--gold);background:rgba(212,175,55,.16)}
+.ml-live .ml-live__btn:active{transform:scale(.94)}
+.ml-live .ml-live__btn:focus-visible,.ml-live .ml-live__switch:focus-visible{outline:2px solid var(--gold-light);outline-offset:2px}
+.ml-live .ml-live__btn svg{width:20px;height:20px;fill:currentColor;stroke:none;display:block}
+.ml-live .ml-live__btn svg.is-stroke{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.ml-live .ml-live__btn--main{width:46px;height:46px;background:var(--grad);border-color:transparent;color:var(--deep)}
+.ml-live .ml-live__btn--main:hover{background:var(--grad);filter:brightness(1.08)}
+.ml-live .ml-live__tag{
+  display:inline-flex;align-items:center;gap:7px;margin-left:4px;color:var(--gold-light);
+  font-size:11px;font-weight:700;letter-spacing:2.5px;line-height:1;
+}
+.ml-live .ml-live__tag i{width:7px;height:7px;border-radius:50%;background:var(--live);display:block}
+.ml-live .ml-live__spacer{flex:1 1 auto}
+
+/* ---------- Live: details ---------- */
+.ml-live .ml-live__meta{padding:clamp(14px,1.8vw,20px) 2px 4px}
+.ml-live .ml-live__title{margin:0;font:600 clamp(1.15rem,2.4vw,1.6rem)/1.28 var(--serif);color:var(--text);overflow-wrap:anywhere}
+
+/* ---------- Go-live alerts toggle ---------- */
+.ml-live .ml-live__notify{
+  display:flex;align-items:center;gap:14px;max-width:var(--ml-stage-width);margin:16px auto 0;padding:14px 18px;
+  border:1px solid var(--line);border-radius:18px;background:rgba(212,175,55,.05);
+}
+.ml-live .ml-live__notify-icon{flex:0 0 auto;width:24px;height:24px;fill:none;stroke:var(--gold);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.ml-live .ml-live__notify-text{flex:1 1 auto;min-width:0}
+.ml-live .ml-live__notify-title{display:block;color:var(--text);font-size:.95rem;font-weight:600}
+.ml-live .ml-live__notify-sub{display:block;margin-top:2px;color:var(--mute);font-size:.82rem;line-height:1.4}
+.ml-live .ml-live__switch{
+  flex:0 0 auto;position:relative;width:50px;height:28px;margin:0;padding:0;border-radius:999px;cursor:pointer;
+  background:#2a251b;border:1px solid var(--line);transition:background .25s,border-color .25s;-webkit-appearance:none;appearance:none;
+}
+.ml-live .ml-live__switch::after{
+  content:'';position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:var(--mute);
+  transition:transform .25s ease,background .25s;
+}
+.ml-live .ml-live__switch[aria-checked="true"]{background:var(--grad);border-color:transparent}
+.ml-live .ml-live__switch[aria-checked="true"]::after{transform:translateX(22px);background:var(--deep)}
+.ml-live .ml-live__switch:disabled{opacity:.45;cursor:not-allowed}
+
+@keyframes ml-pulse{0%{box-shadow:0 0 0 0 rgba(229,100,90,.6)}70%{box-shadow:0 0 0 8px rgba(229,100,90,0)}100%{box-shadow:0 0 0 0 rgba(229,100,90,0)}}
+@keyframes ml-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){
+  .ml-live .ml-live__status.is-live .ml-live__dot,.ml-live .ml-live__spin{animation:none}
+  .ml-live .ml-live__controls,.ml-live .ml-live__switch,.ml-live .ml-live__switch::after{transition:none}
+}
+
+@media(max-width:560px){
+  .ml-live{border-radius:20px}
+  .ml-live .ml-live__stage{border-radius:18px}
+  .ml-live .ml-live__frame{border-radius:12px}
+  .ml-live .ml-live__btn{width:36px;height:36px}
+  .ml-live .ml-live__btn--main{width:42px;height:42px}
+  .ml-live .ml-live__notify{padding:12px 14px;gap:10px}
+}
+
+/* ---------- Help sheet for blocked notifications (sits on <body>, so colours are literal) ---------- */
+.ml-sheet{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:flex-end;justify-content:center;padding:16px;background:rgba(0,0,0,.65);font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+.ml-sheet *{box-sizing:border-box}
+.ml-sheet__card{width:100%;max-width:440px;max-height:90vh;overflow:auto;padding:22px 20px 18px;border-radius:22px;color:#f5efe0;
+  background:linear-gradient(180deg,#1b1812,#110f0b);border:1px solid rgba(212,175,55,.35);box-shadow:0 24px 60px rgba(0,0,0,.6)}
+.ml-sheet__title{margin:0 0 6px;font:600 1.25rem/1.25 'Playfair Display',Georgia,serif;color:#f0d17e}
+.ml-sheet__intro{margin:0 0 12px;color:#a99f88;font-size:.9rem;line-height:1.45}
+.ml-sheet__steps{margin:0 0 14px;padding-left:20px;font-size:.95rem;line-height:1.5}
+.ml-sheet__steps li{margin:0 0 8px;padding-left:4px}
+.ml-sheet__steps li::marker{color:#d4af37;font-weight:700}
+.ml-sheet__msg{margin:0 0 10px;min-height:1.2em;color:#e5645a;font-size:.85rem}
+.ml-sheet__btn{display:block;width:100%;margin:8px 0 0;padding:13px 16px;border-radius:999px;cursor:pointer;font:600 .95rem inherit;font-family:inherit;
+  color:#f0d17e;background:transparent;border:1px solid rgba(212,175,55,.35)}
+.ml-sheet__btn--main{color:#100e0a;border-color:transparent;background:linear-gradient(135deg,#f0d17e,#d4af37 55%,#a97e2f)}
+.ml-sheet__btn:focus-visible{outline:2px solid #f0d17e;outline-offset:2px}
+@media(min-width:600px){.ml-sheet{align-items:center}}
+
+/* ---- clearer help sheet: device tabs + big numbered steps ---- */
+.ml-sheet__tabs{display:flex;gap:6px;margin:0 0 16px;padding:4px;border-radius:999px;background:#0b0a07;border:1px solid rgba(212,175,55,.25)}
+.ml-sheet__tab{flex:1 1 0;margin:0;padding:9px 6px;border:0;border-radius:999px;cursor:pointer;background:transparent;color:#a99f88;font:600 .85rem inherit;font-family:inherit}
+.ml-sheet__tab[aria-selected="true"]{color:#100e0a;background:linear-gradient(135deg,#f0d17e,#d4af37 55%,#a97e2f)}
+.ml-sheet__tab:focus-visible{outline:2px solid #f0d17e;outline-offset:2px}
+.ml-sheet__steps{list-style:none;margin:0 0 12px;padding:0;counter-reset:mlstep}
+.ml-sheet__steps li{counter-increment:mlstep;display:flex;gap:12px;align-items:flex-start;margin:0 0 14px;padding:0;font-size:1rem;line-height:1.45}
+.ml-sheet__steps li::before{content:counter(mlstep);flex:0 0 28px;width:28px;height:28px;margin-top:1px;border-radius:50%;display:grid;place-items:center;
+  font-weight:700;font-size:.9rem;color:#100e0a;background:linear-gradient(135deg,#f0d17e,#d4af37 55%,#a97e2f)}
+.ml-sheet__steps strong{color:#f0d17e;font-weight:700}
+.ml-sheet__tip{margin:0 0 12px;padding:10px 12px;border-radius:12px;background:rgba(212,175,55,.08);color:#d9cfb6;font-size:.85rem;line-height:1.45}
+.ml-sheet__tip strong{color:#f0d17e}

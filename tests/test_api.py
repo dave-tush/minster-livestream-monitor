@@ -59,6 +59,22 @@ def test_root_reports_service_running(env):
     assert response.headers["content-type"].startswith("text/html")
 
 
+def test_cors_allows_wordpress_origin(env):
+    """CORS middleware must allow the WordPress origin for GET/OPTIONS."""
+    client, _, _ = env
+    response = client.options(
+        "/radio/now",
+        headers={
+            "Origin": "https://toluwalogoagboola.org",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://toluwalogoagboola.org"
+    assert "GET" in response.headers["access-control-allow-methods"]
+    assert "OPTIONS" in response.headers["access-control-allow-methods"]
+
+
 def test_starts_without_monitoring_credentials():
     settings = Settings(minister_name="", youtube_api_key="")
     app = create_app(settings, background=False)

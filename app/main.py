@@ -6,6 +6,7 @@ import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 from .config import ENV_OVERRIDES, Settings
@@ -138,6 +139,20 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
                     t.cancel()
 
     app = FastAPI(title="Minister Livestream Monitor", lifespan=lifespan)
+
+    # CORS for the Dominion Radio WordPress frontend.
+    # Only the production WordPress origin is allowed; no wildcard.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["https://toluwalogoagboola.org"],
+        allow_origin_regex=None,
+        allow_methods=["GET", "OPTIONS"],
+        allow_headers=["Accept", "Accept-Language", "Cache-Control", "Content-Language", "Content-Type", "Range"],
+        allow_credentials=False,
+        max_age=86400,
+        expose_headers=["Accept-Ranges", "Content-Range", "Content-Length", "Content-Type"],
+    )
+
     app.include_router(build_radio_router())
 
     def require_admin(request: Request, x_api_key: str | None) -> None:
