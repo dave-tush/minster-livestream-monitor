@@ -24,7 +24,7 @@ define( 'DOMINION_RADIO_URL', plugin_dir_url( __FILE__ ) );
 
 // Backend used when none is saved in Settings > Dominion Radio. Override with the
 // 'dominion_radio_default_backend' filter, a shortcode backend="..." attribute, or the Settings page.
-define( 'DOMINION_RADIO_DEFAULT_BACKEND', 'https://minster-livestream-monitor-zcvp.onrender.com' );
+define( 'DOMINION_RADIO_DEFAULT_BACKEND', 'https://minster-livestream-monitor.onrender.com' );
 
 require_once DOMINION_RADIO_DIR . 'includes/class-settings.php';
 require_once DOMINION_RADIO_DIR . 'includes/class-shortcode.php';
