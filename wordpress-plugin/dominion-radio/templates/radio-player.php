@@ -1,6 +1,6 @@
 <?php
 /**
- * Dominion Radio player markup — v2.6.0 two-column ministry hero.
+ * Dominion Radio player markup — v2.7.0 adaptive ministry hero (container-query layout).
  *
  * Left: eyebrow, heading, description, ON AIR status, player (priority).
  * Right: Apostle portrait full-bleed at hero height (supporting).
@@ -56,37 +56,44 @@ $dr_eyebrow = ( 0 === strcasecmp( (string) $atts['name'], 'Dominion Radio' ) )
 				</div>
 
 				<div class="dr-player__card" data-dr="card">
-					<div class="dr-player__play">
-						<button type="button" class="dr-btn dr-btn--play" data-dr="play" aria-label="<?php esc_attr_e( 'Listen Live', 'dominion-radio' ); ?>" disabled>
-							<svg class="dr-icon dr-icon--play" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8.2 4.9v14.2a.6.6 0 0 0 .92.5l11-7.1a.6.6 0 0 0 0-1l-11-7.1a.6.6 0 0 0-.92.5z"/></svg>
-							<svg class="dr-icon dr-icon--pause" viewBox="0 0 24 24" aria-hidden="true" focusable="false" hidden><rect fill="currentColor" x="6.2" y="5" width="3.8" height="14" rx="1"/><rect fill="currentColor" x="14" y="5" width="3.8" height="14" rx="1"/></svg>
-							<span class="dr-spinner" aria-hidden="true"></span>
-							<span class="dr-play__label" data-dr="play-label"><?php esc_html_e( 'Listen Live', 'dominion-radio' ); ?></span>
-						</button>
+
+					<div class="dr-player__head">
+						<span class="dr-player__label">
+							<span class="dr-eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+							<?php esc_html_e( 'Now playing', 'dominion-radio' ); ?>
+						</span>
+						<button type="button" class="dr-btn dr-btn--live" data-dr="golive" hidden><?php esc_html_e( 'Back to live', 'dominion-radio' ); ?></button>
 					</div>
+
 					<div class="dr-player__track">
-						<div class="dr-player__labelrow">
-							<span class="dr-player__label"><?php esc_html_e( 'Now playing', 'dominion-radio' ); ?></span>
-							<button type="button" class="dr-btn dr-btn--live" data-dr="golive" hidden><?php esc_html_e( 'Back to live', 'dominion-radio' ); ?></button>
-						</div>
 						<p class="dr-player__track-title" data-dr="title"><?php esc_html_e( 'Connecting…', 'dominion-radio' ); ?></p>
 						<p class="dr-player__performer" data-dr="performer"></p>
 					</div>
-					<div class="dr-player__mute">
+
+					<div class="dr-player__progress">
+						<input class="dr-seek" data-dr="seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="<?php esc_attr_e( 'Seek within this track', 'dominion-radio' ); ?>" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="" aria-disabled="true" disabled />
+						<p class="dr-player__time" aria-hidden="true"><span data-dr="elapsed">0:00</span><span class="dr-player__time-sep"> / </span><span data-dr="total">0:00</span></p>
+					</div>
+
+					<div class="dr-player__controls">
+						<button type="button" class="dr-btn dr-btn--play" data-dr="play" aria-label="<?php esc_attr_e( 'Join the Room', 'dominion-radio' ); ?>" disabled>
+							<svg class="dr-icon dr-icon--play" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" d="M4.5 15v-3a7.5 7.5 0 0 1 15 0v3"/><rect x="3" y="14" width="4.2" height="6.5" rx="1.6" fill="currentColor"/><rect x="16.8" y="14" width="4.2" height="6.5" rx="1.6" fill="currentColor"/></svg>
+							<svg class="dr-icon dr-icon--pause" viewBox="0 0 24 24" aria-hidden="true" focusable="false" hidden><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M9 4.5H6.5A1.5 1.5 0 0 0 5 6v12a1.5 1.5 0 0 0 1.5 1.5H9M15 8l4 4-4 4M19 12H9.5"/></svg>
+							<span class="dr-spinner" aria-hidden="true"></span>
+							<span class="dr-play__label" data-dr="play-label"><?php esc_html_e( 'Join the Room', 'dominion-radio' ); ?></span>
+						</button>
 						<button type="button" class="dr-btn dr-btn--mute" data-dr="mute" aria-label="<?php esc_attr_e( 'Mute', 'dominion-radio' ); ?>" aria-pressed="false">
 							<svg class="dr-icon dr-icon--vol" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M4 9.5v5h3.4L12 18.5v-13L7.4 9.5z"/><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M15.6 9.2a4 4 0 0 1 0 5.6M18.2 6.6a7.6 7.6 0 0 1 0 10.8"/></svg>
 							<svg class="dr-icon dr-icon--muted" viewBox="0 0 24 24" aria-hidden="true" focusable="false" hidden><path fill="currentColor" d="M4 9.5v5h3.4L12 18.5v-13L7.4 9.5z"/><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M16 9.6l4.8 4.8M20.8 9.6L16 14.4"/></svg>
 						</button>
 					</div>
 
-					<input class="dr-seek" data-dr="seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="<?php esc_attr_e( 'Seek within this track', 'dominion-radio' ); ?>" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="" aria-disabled="true" disabled />
-
-					<p class="dr-player__time" aria-hidden="true"><span data-dr="elapsed">0:00</span><span class="dr-player__time-sep"> / </span><span data-dr="total">0:00</span></p>
-
 					<div class="dr-player__next" data-dr="next" hidden>
 						<span class="dr-player__next-label"><?php esc_html_e( 'Up next', 'dominion-radio' ); ?></span>
-						<span class="dr-player__next-title" data-dr="next-title"></span>
-						<span class="dr-player__next-performer" data-dr="next-performer"></span>
+						<span class="dr-player__next-text">
+							<span class="dr-player__next-title" data-dr="next-title"></span>
+							<span class="dr-player__next-performer" data-dr="next-performer"></span>
+						</span>
 					</div>
 				</div>
 

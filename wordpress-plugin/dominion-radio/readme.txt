@@ -2,7 +2,7 @@
 Requires at least: 5.8
 Tested up to: 7.2
 Requires PHP: 7.4
-Stable tag: 2.6.3
+Stable tag: 2.7.0
 License: GPLv2 or later
 
 A listen-live radio player for the ministry website. Connects to the Dominion Radio backend.
@@ -31,6 +31,10 @@ The backend must list this website's exact origin (for example https://toluwalog
 The backend admin API key (optional, used only by "Sync new uploads now") is never sent to visitors. Prefer defining DOMINION_RADIO_ADMIN_KEY in wp-config.php.
 
 == Changelog ==
+= 2.7.0 =
+* Redesigned player room: layout now adapts to the width of the column the shortcode sits in (container queries), so it no longer breaks inside narrow Elementor columns.
+* New primary action: "Join the Room" / "Leave Room" (replaces Listen Live / Pause Broadcast), with an animated equaliser while you are in the room.
+* Cleaner stacked player card: now playing, seek, join/leave and mute, up next.
 = 2.6.3 =
 * The player now defaults to the production backend (https://minster-livestream-monitor.onrender.com) when no backend URL is saved, so it plays immediately after activation. Settings, the backend attribute on the shortcode, or the dominion_radio_default_backend filter still override it.
 

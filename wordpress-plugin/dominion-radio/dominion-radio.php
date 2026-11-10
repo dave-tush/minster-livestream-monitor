@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Dominion Radio
  * Description:       Listen-live player for Dominion Radio. Place it on any page with the [dominion_radio] shortcode. Connects to the Dominion Radio backend (GET /radio/now and /radio/audio/{id}).
- * Version:           2.6.3
+ * Version:           2.7.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Dominion Radio
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'DOMINION_RADIO_VERSION', '2.6.3' );
+define( 'DOMINION_RADIO_VERSION', '2.7.0' );
 define( 'DOMINION_RADIO_FILE', __FILE__ );
 define( 'DOMINION_RADIO_DIR', plugin_dir_path( __FILE__ ) );
 define( 'DOMINION_RADIO_URL', plugin_dir_url( __FILE__ ) );

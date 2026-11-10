@@ -297,7 +297,7 @@
         if (e && e.name === 'AbortError') { return; }     // superseded by a newer load/pause
         if (e && e.name === 'NotAllowedError') {
           self.wantPlay = false;
-          self.announce('Press play to start listening.');
+          self.announce('Press Join the Room to start listening.');
         } else {
           self.onAudioError();
         }
@@ -602,9 +602,9 @@
     // controls
     var canPlay = hasTrack && (m === 'ok' || soft);
     this.el.play.disabled = !canPlay;
-    // Visible primary action: Listen Live / Connecting… / Pause Broadcast.
+    // Visible primary action: Join the Room / Joining… / Leave Room.
     // Retry (Try Again) lives in the notice for error states.
-    var playLabel = listening ? 'Pause Broadcast' : (this.buffering ? 'Connecting…' : (state === 'loading' ? 'Connecting…' : 'Listen Live'));
+    var playLabel = listening ? 'Leave Room' : (this.buffering ? 'Joining…' : (state === 'loading' ? 'Connecting…' : 'Join the Room'));
     this.el.play.setAttribute('aria-label', playLabel);
     if (this.el['play-label']) { this.el['play-label'].textContent = playLabel; }
     setHidden(this.icoPlay, listening);
