@@ -144,7 +144,8 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     # Only the production WordPress origin is allowed; no wildcard.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["https://toluwalogoagboola.org"],
+        # allow_origins=["https://toluwalogoagboola.org"],
+        allow_origins=["https://toluwalogoagboola.org", "https://rejectbrothers.s6-tastewp.com/radio/", "https://rejectbrothers.s6-tastewp.com"],
         allow_origin_regex=None,
         allow_methods=["GET", "OPTIONS"],
         allow_headers=["Accept", "Accept-Language", "Cache-Control", "Content-Language", "Content-Type", "Range"],
