@@ -39,3 +39,11 @@ position 0 with `started_at` and `checkpoint_at` set to the current time, and
 the true pre-upgrade playback position cannot be recovered. After
 bootstrapping, subsequent calls resume normally and server downtime is
 excluded from playback progression.
+
+## Dominion Radio seasonal playlists and admin controls
+
+Set `ADMIN_API_KEY` in the backend environment. The WordPress ATA Radio plugin uses the same key for server-side radio admin actions. The new `/radio/admin/config` endpoints require `X-API-Key`; `/radio/catalog` lists searchable sermon metadata only and does not download audio.
+
+In WordPress **Settings → ATA Radio**, admins can stop/resume playback, search sermon names, select several sermons, and set a season name, emphasis, and inclusive UTC start/end dates. During the active dates only the selected available sermons rotate; otherwise the full available catalog is used. Existing playback checkpoints are preserved, and switching seasons immediately resets an out-of-rotation track to the selected playlist. The existing player shows the active season in its intro text without changing the player layout.
+
+The player uses the broadcast `started_at` value to detect a fresh cycle even when a one-sermon playlist reports the same sermon ID. Deploy the updated WordPress plugin alongside the backend changes for the admin UI controls.

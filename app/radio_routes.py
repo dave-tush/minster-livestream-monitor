@@ -8,6 +8,7 @@
 """
 import html
 import secrets
+from datetime import date
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
@@ -150,6 +151,13 @@ def build_radio_router() -> APIRouter:
             raise HTTPException(503, "Radio is not configured (TELEGRAM_* settings)")
         return engine
 
+    def require_radio_admin(request: Request, x_api_key: str | None):
+        expected = request.app.state.settings.admin_api_key
+        if not expected:
+            raise HTTPException(503, "Endpoint disabled: ADMIN_API_KEY is not configured")
+        if not x_api_key or not secrets.compare_digest(x_api_key.encode(), expected.encode()):
+            raise HTTPException(401, "Invalid API key")
+
     @router.api_route("", methods=["GET", "HEAD"], response_class=HTMLResponse)
     def player(request: Request):
         engine = engine_or_503(request)
@@ -158,6 +166,8 @@ def build_radio_router() -> APIRouter:
     @router.get("/now")
     def now(request: Request):
         engine = engine_or_503(request)
+        if not engine.db.radio_settings_get()["enabled"]:
+            raise HTTPException(503, {"code": "stopped", "message": "Radio stopped by an administrator"})
         playing = engine.now_playing()
         if playing is None:
             raise HTTPException(503, "No audio available yet. The station is still loading the channel.")
@@ -172,6 +182,61 @@ def build_radio_router() -> APIRouter:
                 "total_seconds": engine.db.radio_total_seconds(),
                 "tracks": [{"id": r["message_id"], "title": r["title"], "performer": r["performer"],
                             "duration": r["duration"], "posted_at": r["posted_at"]} for r in rows]}
+
+    @router.get("/catalog")
+    def catalog(request: Request, search: str = "", limit: int = 100, offset: int = 0):
+        """Names/metadata only; no audio is downloaded or returned by this endpoint."""
+        engine = engine_or_503(request)
+        rows, total = engine.db.radio_catalog(search, max(1, min(limit, 500)), max(0, offset))
+        return {"total": total, "tracks": [{"id": r["message_id"], "title": r["title"],
+                "performer": r["performer"], "duration": r["duration"], "posted_at": r["posted_at"]} for r in rows]}
+
+    @router.get("/admin/config")
+    def admin_config(request: Request, x_api_key: str | None = Header(default=None)):
+        require_radio_admin(request, x_api_key)
+        engine = engine_or_503(request)
+        return engine.db.radio_settings_get()
+
+    @router.post("/admin/config")
+    async def update_admin_config(request: Request, x_api_key: str | None = Header(default=None)):
+        require_radio_admin(request, x_api_key)
+        engine = engine_or_503(request)
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(400, "Expected a JSON object") from None
+        if not isinstance(payload, dict):
+            raise HTTPException(400, "Expected a JSON object")
+        try:
+            starts_on = date.fromisoformat(payload["starts_on"]).isoformat() if payload.get("starts_on") else None
+            ends_on = date.fromisoformat(payload["ends_on"]).isoformat() if payload.get("ends_on") else None
+        except (ValueError, TypeError):
+            raise HTTPException(400, "Season dates must use YYYY-MM-DD") from None
+        if bool(starts_on) != bool(ends_on) or (starts_on and starts_on > ends_on):
+            raise HTTPException(400, "Provide both season dates, with the end date on or after the start date")
+        name = str(payload.get("season_name", "")).strip()[:120]
+        emphasis = str(payload.get("emphasis", "")).strip()[:200]
+        ids = payload.get("track_ids", [])
+        if not isinstance(ids, list) or len(ids) > 5000 or any(type(i) is not int or i <= 0 for i in ids):
+            raise HTTPException(400, "track_ids must be a list of positive sermon IDs")
+        ids = list(dict.fromkeys(ids))
+        available = set()
+        offset = 0
+        while True:
+            page, total = engine.db.radio_catalog("", 500, offset)
+            available.update(r["message_id"] for r in page)
+            offset += len(page)
+            if offset >= total or not page:
+                break
+        if any(i not in available for i in ids):
+            raise HTTPException(400, "One or more selected sermons are unavailable")
+        has_season = bool(name or emphasis or starts_on or ends_on or ids)
+        if has_season and (not name or not emphasis or not starts_on or not ends_on or not ids):
+            raise HTTPException(400, "A seasonal playlist needs a name, emphasis, date range and at least one sermon")
+        current = engine.db.radio_settings_get()
+        engine.db.radio_settings_set(enabled=bool(payload.get("enabled", current["enabled"])),
+            season_name=name, emphasis=emphasis, starts_on=starts_on, ends_on=ends_on, track_ids=ids)
+        return engine.db.radio_settings_get()
 
     @router.get("/audio/{message_id}")
     async def audio(request: Request, message_id: int):

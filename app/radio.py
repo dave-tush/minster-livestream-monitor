@@ -156,6 +156,9 @@ class RadioEngine:
     def now_playing(self, now: datetime | None = None) -> dict | None:
         """What is on air right now (advances the pointer if the track has finished)."""
         now = now or self._clock()
+        settings = self.db.radio_settings_get()
+        if not settings["enabled"]:
+            return None
         with self._lock:
             track, started, position = self._advance_locked(now)
             if track is None:
@@ -170,6 +173,9 @@ class RadioEngine:
                 "next": _public(nxt) if nxt and nxt["message_id"] != track["message_id"] else None,
                 "server_time": _fmt(now),
                 "tracks_in_rotation": self.db.radio_count(),
+                "season": ({"name": settings["season_name"], "emphasis": settings["emphasis"],
+                            "starts_on": settings["starts_on"], "ends_on": settings["ends_on"]}
+                           if settings["season_active"] else None),
             }
 
     def _current_position_locked(self, state: dict, started: datetime,
@@ -213,7 +219,8 @@ class RadioEngine:
         state = self.db.radio_get_state()
         track = self.db.radio_get_track(state["message_id"]) if state["message_id"] else None
 
-        if track is None or not track["available"]:
+        if (track is None or not track["available"] or not state.get("started_at")
+                or not self.db.radio_track_in_rotation(track["message_id"])):
             track = self.db.radio_first_track()      # first run, or the on-air track was removed
             if track is None:
                 return None, now, 0.0
@@ -283,7 +290,8 @@ class RadioEngine:
         state = self.db.radio_get_state()
         track = self.db.radio_get_track(state["message_id"]) if state["message_id"] else None
 
-        if track is None or not track["available"]:
+        if (track is None or not track["available"]
+                or not self.db.radio_track_in_rotation(track["message_id"])):
             # A legacy record without checkpoint data gets bootstrapped by
             # _advance_locked, which restarts the track at position 0 and sets
             # checkpoint_at. Without that row nothing can be checkpointed yet.
@@ -529,7 +537,8 @@ class RadioEngine:
             if not state or not state["message_id"]:
                 return
             track = self.db.radio_get_track(state["message_id"])
-            if track is None or not track["available"]:
+            if (track is None or not track["available"]
+                    or not self.db.radio_track_in_rotation(track["message_id"])):
                 return
             position_seconds = state.get("position_seconds")
             checkpoint_at = state.get("checkpoint_at")

@@ -164,7 +164,7 @@ def test_starts_without_monitoring_credentials():
     with TestClient(app) as client:
         assert client.get("/").status_code == 200
         assert client.get("/health").json() == {"status": "ok"}
-        assert client.get("/status").json() == {"status": "offline"}
+        assert client.get("/status").json() == {"status": "unconfigured"}
 
 
 def test_status_offline(env):
