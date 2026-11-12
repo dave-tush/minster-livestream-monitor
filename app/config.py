@@ -73,6 +73,11 @@ class Settings:
     radio_cache_max_mb: int = 1024
     radio_sync_interval_seconds: int = 300
     radio_prefetch_count: int = 2
+    # Season start/end dates are calendar dates in this time zone (an IANA name such as Africa/Lagos).
+    radio_timezone: str = "Africa/Lagos"
+    # When the station has no saved position (a new or wiped disk) it joins a fixed 24/7 schedule that
+    # started at this moment, instead of starting again from the oldest sermon. Never change it once live.
+    radio_epoch: str = "2026-01-01T00:00:00Z"
 
     @property
     def radio_configured(self) -> bool:
@@ -114,6 +119,8 @@ class Settings:
             radio_cache_max_mb=max(int(os.getenv("RADIO_CACHE_MAX_MB", "1024")), 50),
             radio_sync_interval_seconds=max(int(os.getenv("RADIO_SYNC_INTERVAL_SECONDS", "300")), 30),
             radio_prefetch_count=max(int(os.getenv("RADIO_PREFETCH_COUNT", "2")), 0),
+            radio_timezone=os.getenv("RADIO_TIMEZONE", "Africa/Lagos").strip() or "Africa/Lagos",
+            radio_epoch=os.getenv("RADIO_EPOCH", "2026-01-01T00:00:00Z").strip() or "2026-01-01T00:00:00Z",
         )
 
     def require_youtube(self) -> None:

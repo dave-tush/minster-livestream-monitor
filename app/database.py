@@ -105,6 +105,32 @@ CREATE TABLE IF NOT EXISTS radio_season_tracks (
     position   INTEGER NOT NULL,
     FOREIGN KEY(message_id) REFERENCES radio_tracks(message_id) ON DELETE CASCADE
 );
+
+-- Programming set by the administrator (single row): stop/resume the station and an optional
+-- "season" (weekly / seasonal emphasis such as Consecration) that plays only its own sermons
+-- between two calendar dates.
+CREATE TABLE IF NOT EXISTS radio_program (
+    id           INTEGER PRIMARY KEY CHECK (id = 1),
+    stopped      INTEGER NOT NULL DEFAULT 0,
+    stopped_at   TEXT,
+    season_on    INTEGER NOT NULL DEFAULT 0,
+    season_name  TEXT    NOT NULL DEFAULT '',
+    keywords     TEXT    NOT NULL DEFAULT '[]',       -- JSON list of words/phrases found in titles
+    use_keywords INTEGER NOT NULL DEFAULT 1,
+    start_date   TEXT,                                -- YYYY-MM-DD, NULL = from now
+    end_date     TEXT,                                -- YYYY-MM-DD, NULL = until ended by hand
+    updated_at   TEXT NOT NULL
+);
+
+-- Sermons the administrator ticked by hand for the season.
+CREATE TABLE IF NOT EXISTS radio_season_picks (
+    message_id INTEGER PRIMARY KEY
+);
+
+-- The season's resolved playlist (keyword matches + hand picks); rebuilt whenever either changes.
+CREATE TABLE IF NOT EXISTS radio_season_playlist (
+    message_id INTEGER PRIMARY KEY
+);
 """
 
 
@@ -156,6 +182,7 @@ class Database:
                              "VALUES (1, 'offline', NULL, ?)", (utcnow(),))
             if conn.execute("SELECT 1 FROM radio_state WHERE id = 1").fetchone() is None:
                 conn.execute("INSERT INTO radio_state (id, updated_at) VALUES (1, ?)", (utcnow(),))
+<<<<<<< HEAD
             if conn.execute("SELECT 1 FROM radio_settings WHERE id = 1").fetchone() is None:
                 conn.execute("INSERT INTO radio_settings (id, updated_at) VALUES (1, ?)", (utcnow(),))
 
@@ -166,6 +193,10 @@ class Database:
             conn.execute("ALTER TABLE radio_state ADD COLUMN position_seconds INTEGER NOT NULL DEFAULT 0")
         if "checkpoint_at" not in cols:
             conn.execute("ALTER TABLE radio_state ADD COLUMN checkpoint_at TEXT")
+=======
+            if conn.execute("SELECT 1 FROM radio_program WHERE id = 1").fetchone() is None:
+                conn.execute("INSERT INTO radio_program (id, updated_at) VALUES (1, ?)", (utcnow(),))
+>>>>>>> 539cb38 (new update)
 
     # ---- writes ----------------------------------------------------------
     def record_live(self, video: LiveVideo, minister_name: str,
@@ -278,6 +309,7 @@ class Database:
             row = conn.execute("SELECT * FROM radio_tracks WHERE message_id = ?", (message_id,)).fetchone()
         return dict(row) if row else None
 
+<<<<<<< HEAD
     def radio_track_in_rotation(self, message_id: int) -> bool:
         with self._tx() as conn:
             where, args = _radio_rotation_filter(conn)
@@ -288,30 +320,71 @@ class Database:
         with self._tx() as conn:
             where, args = _radio_rotation_filter(conn)
             row = conn.execute(f"SELECT * FROM radio_tracks WHERE {where} ORDER BY message_id LIMIT 1", args).fetchone()
+=======
+    # "scoped" = only the active season's sermons (radio_season_playlist) instead of the whole library.
+    _SCOPE = " AND message_id IN (SELECT message_id FROM radio_season_playlist)"
+
+    def radio_first_track(self, scoped: bool = False) -> dict | None:
+        with self._tx() as conn:
+            row = conn.execute("SELECT * FROM radio_tracks WHERE available = 1"
+                               + (self._SCOPE if scoped else "")
+                               + " ORDER BY message_id LIMIT 1").fetchone()
+>>>>>>> 539cb38 (new update)
         return dict(row) if row else None
 
-    def radio_next_track(self, after_message_id: int) -> dict | None:
+    def radio_next_track(self, after_message_id: int, scoped: bool = False) -> dict | None:
         """The track after `after_message_id`, wrapping back to the first one at the end."""
+        scope = self._SCOPE if scoped else ""
         with self._tx() as conn:
+<<<<<<< HEAD
             where, args = _radio_rotation_filter(conn)
             row = conn.execute(f"SELECT * FROM radio_tracks WHERE {where} AND message_id > ? "
                                "ORDER BY message_id LIMIT 1", (*args, after_message_id)).fetchone()
             if row is None:
                 row = conn.execute(f"SELECT * FROM radio_tracks WHERE {where} ORDER BY message_id LIMIT 1", args).fetchone()
+=======
+            row = conn.execute("SELECT * FROM radio_tracks WHERE available = 1 AND message_id > ?"
+                               + scope + " ORDER BY message_id LIMIT 1", (after_message_id,)).fetchone()
+            if row is None:
+                row = conn.execute("SELECT * FROM radio_tracks WHERE available = 1" + scope
+                                   + " ORDER BY message_id LIMIT 1").fetchone()
+>>>>>>> 539cb38 (new update)
         return dict(row) if row else None
 
-    def radio_total_seconds(self) -> int:
+    def radio_schedule(self, scoped: bool = False) -> list[dict]:
+        """(message_id, duration) of every playable track in broadcast order."""
         with self._tx() as conn:
+<<<<<<< HEAD
             where, args = _radio_rotation_filter(conn)
             return conn.execute(f"SELECT COALESCE(SUM(duration), 0) FROM radio_tracks WHERE {where}", args).fetchone()[0]
+=======
+            rows = conn.execute("SELECT message_id, duration FROM radio_tracks WHERE available = 1"
+                                + (self._SCOPE if scoped else "") + " ORDER BY message_id").fetchall()
+        return [dict(r) for r in rows]
+
+    def radio_total_seconds(self, scoped: bool = False) -> int:
+        with self._tx() as conn:
+            return conn.execute("SELECT COALESCE(SUM(duration), 0) FROM radio_tracks WHERE available = 1"
+                                + (self._SCOPE if scoped else "")).fetchone()[0]
+>>>>>>> 539cb38 (new update)
 
     def radio_set_available(self, message_id: int, available: bool) -> None:
         with self._tx() as conn:
             conn.execute("UPDATE radio_tracks SET available = ? WHERE message_id = ?",
                          (1 if available else 0, message_id))
 
-    def radio_list_tracks(self, limit: int = 100, offset: int = 0) -> list[dict]:
+    @staticmethod
+    def _like(q: str) -> str:
+        return "%" + q.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+    def radio_list_tracks(self, limit: int = 100, offset: int = 0, q: str = "") -> list[dict]:
+        """Playlist rows, oldest first. `q` keeps only titles/performers containing that text."""
+        sql, args = "SELECT * FROM radio_tracks WHERE available = 1", []
+        if q.strip():
+            sql += " AND (LOWER(title) LIKE ? ESCAPE '\\' OR LOWER(performer) LIKE ? ESCAPE '\\')"
+            args += [self._like(q.strip())] * 2
         with self._tx() as conn:
+<<<<<<< HEAD
             where, args = _radio_rotation_filter(conn)
             rows = conn.execute(f"SELECT * FROM radio_tracks WHERE {where} "
                                 "ORDER BY message_id LIMIT ? OFFSET ?", (*args, limit, offset)).fetchall()
@@ -359,6 +432,76 @@ class Database:
         with self._tx() as conn:
             where, args = _radio_rotation_filter(conn)
             return conn.execute(f"SELECT COUNT(*) FROM radio_tracks WHERE {where}", args).fetchone()[0]
+=======
+            rows = conn.execute(sql + " ORDER BY message_id LIMIT ? OFFSET ?", args + [limit, offset]).fetchall()
+        return [dict(r) for r in rows]
+
+    def radio_count(self, scoped: bool = False, q: str = "") -> int:
+        sql, args = "SELECT COUNT(*) FROM radio_tracks WHERE available = 1" + (self._SCOPE if scoped else ""), []
+        if q.strip():
+            sql += " AND (LOWER(title) LIKE ? ESCAPE '\\' OR LOWER(performer) LIKE ? ESCAPE '\\')"
+            args += [self._like(q.strip())] * 2
+        with self._tx() as conn:
+            return conn.execute(sql, args).fetchone()[0]
+
+    def radio_in_scope(self, message_id: int) -> bool:
+        with self._tx() as conn:
+            return conn.execute("SELECT 1 FROM radio_season_playlist WHERE message_id = ?",
+                                (message_id,)).fetchone() is not None
+
+    def radio_tracks_brief(self) -> list[dict]:
+        """Every playable track's id, title and length (no heavy columns): input for season matching."""
+        with self._tx() as conn:
+            rows = conn.execute("SELECT message_id, title, duration FROM radio_tracks WHERE available = 1 "
+                                "ORDER BY message_id").fetchall()
+        return [dict(r) for r in rows]
+
+    # ---- administrator programming (stop / resume / season) -------------------
+    def radio_program_get(self) -> dict:
+        with self._tx() as conn:
+            row = dict(conn.execute("SELECT * FROM radio_program WHERE id = 1").fetchone())
+            picks = [r[0] for r in conn.execute("SELECT message_id FROM radio_season_picks "
+                                                "ORDER BY message_id").fetchall()]
+        row["keywords"] = json.loads(row["keywords"] or "[]")
+        row["picks"] = picks
+        for k in ("stopped", "season_on", "use_keywords"):
+            row[k] = bool(row[k])
+        return row
+
+    def radio_program_save_season(self, *, name: str, keywords: list[str], use_keywords: bool,
+                                  start_date: str | None, end_date: str | None, picks: list[int],
+                                  enabled: bool = True) -> None:
+        with self._tx() as conn:
+            conn.execute("UPDATE radio_program SET season_on = ?, season_name = ?, keywords = ?, "
+                         "use_keywords = ?, start_date = ?, end_date = ?, updated_at = ? WHERE id = 1",
+                         (1 if enabled else 0, name, json.dumps(keywords), 1 if use_keywords else 0,
+                          start_date, end_date, utcnow()))
+            conn.execute("DELETE FROM radio_season_picks")
+            conn.executemany("INSERT OR IGNORE INTO radio_season_picks (message_id) VALUES (?)",
+                             [(int(i),) for i in picks])
+
+    def radio_program_set_season_on(self, enabled: bool) -> None:
+        with self._tx() as conn:
+            conn.execute("UPDATE radio_program SET season_on = ?, updated_at = ? WHERE id = 1",
+                         (1 if enabled else 0, utcnow()))
+
+    def radio_program_set_stopped(self, stopped: bool, stopped_at: str | None = None) -> None:
+        with self._tx() as conn:
+            conn.execute("UPDATE radio_program SET stopped = ?, stopped_at = ?, updated_at = ? WHERE id = 1",
+                         (1 if stopped else 0, stopped_at if stopped else None, utcnow()))
+
+    def radio_playlist_set(self, ids: list[int]) -> None:
+        with self._tx() as conn:
+            conn.execute("DELETE FROM radio_season_playlist")
+            conn.executemany("INSERT OR IGNORE INTO radio_season_playlist (message_id) VALUES (?)",
+                             [(int(i),) for i in ids])
+
+    def radio_playlist_count(self) -> int:
+        """Playable sermons in the season playlist."""
+        with self._tx() as conn:
+            return conn.execute("SELECT COUNT(*) FROM radio_tracks WHERE available = 1 AND message_id IN "
+                                "(SELECT message_id FROM radio_season_playlist)").fetchone()[0]
+>>>>>>> 539cb38 (new update)
 
     # ---- transcript / ministration timing ------------------------------------
     def transcript_get(self, video_id: str) -> dict | None:
@@ -413,9 +556,14 @@ class Database:
         """Forget every saved track and the on-air position (used when the Telegram channel changes)."""
         with self._tx() as conn:
             conn.execute("DELETE FROM radio_tracks")
+<<<<<<< HEAD
             conn.execute("DELETE FROM radio_season_tracks")
             conn.execute("UPDATE radio_settings SET season_name = '', emphasis = '', starts_on = NULL, "
                          "ends_on = NULL, updated_at = ? WHERE id = 1", (utcnow(),))
+=======
+            conn.execute("DELETE FROM radio_season_picks")        # post numbers belong to the old channel
+            conn.execute("DELETE FROM radio_season_playlist")
+>>>>>>> 539cb38 (new update)
             conn.execute("UPDATE radio_state SET message_id = NULL, started_at = NULL, "
                          "last_synced_id = 0, position_seconds = 0, checkpoint_at = NULL, "
                          "updated_at = ? WHERE id = 1", (utcnow(),))

@@ -2,16 +2,26 @@
 
   GET  /radio                 listener page (press "Listen live")
   GET  /radio/now             what is on air + exact position, as JSON
-  GET  /radio/playlist        the rotation, oldest upload first (?limit=&offset=)
+  GET  /radio/playlist        the rotation, oldest upload first (?limit=&offset=&q=  q searches the names)
   GET  /radio/audio/{id}      the audio file (supports Range requests so players can seek)
   POST /radio/sync-now        admin only: pull new uploads from Telegram immediately
+
+Administrator programming (all need the X-API-Key header = ADMIN_API_KEY):
+  GET  /radio/admin/program   stop state, season settings and whether the next sermon is downloaded yet
+  POST /radio/admin/program   save a season (name, keywords, dates, hand-picked sermons) and start using it
+  POST /radio/admin/preview   which sermons a season would contain (saves nothing)
+  POST /radio/admin/stop      take the station off air
+  POST /radio/admin/resume    put it back on air where it left off
+  POST /radio/admin/skip      jump to the next sermon now
+  POST /radio/admin/season/end   end the season: the whole library plays again
 """
 import html
 import secrets
 from datetime import date
 
 from fastapi import APIRouter, Header, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from pydantic import BaseModel, Field
 
 PLAYER_PAGE = """<!doctype html>
 <html lang="en">
@@ -142,8 +152,31 @@ getNow().then(render).catch(() => { $("title").textContent = "Station is warming
 </html>"""
 
 
+class SeasonIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    keywords: list[str] = Field(default_factory=list, max_length=40)
+    use_keywords: bool = True
+    start_date: str | None = None          # YYYY-MM-DD, blank = from now
+    end_date: str | None = None            # YYYY-MM-DD, blank = until ended by hand
+    track_ids: list[int] = Field(default_factory=list, max_length=5000)
+    go_live: bool = False                  # also put the station back on air if it was stopped
+
+
+class PreviewIn(BaseModel):
+    keywords: list[str] = Field(default_factory=list, max_length=40)
+    use_keywords: bool = True
+    track_ids: list[int] = Field(default_factory=list, max_length=5000)
+
+
 def build_radio_router() -> APIRouter:
     router = APIRouter(prefix="/radio", tags=["radio"])
+
+    def require_admin(request: Request, x_api_key: str | None) -> None:
+        expected = request.app.state.settings.admin_api_key
+        if not expected:
+            raise HTTPException(503, "Endpoint disabled: ADMIN_API_KEY is not configured")
+        if not x_api_key or not secrets.compare_digest(x_api_key.encode(), expected.encode()):
+            raise HTTPException(401, "Invalid API key")
 
     def engine_or_503(request: Request):
         engine = request.app.state.radio
@@ -166,19 +199,28 @@ def build_radio_router() -> APIRouter:
     @router.get("/now")
     def now(request: Request):
         engine = engine_or_503(request)
+<<<<<<< HEAD
         if not engine.db.radio_settings_get()["enabled"]:
             raise HTTPException(503, {"code": "stopped", "message": "Radio stopped by an administrator"})
+=======
+        if engine.is_stopped():
+            # The player page recognises "stopped" and pauses itself, then shows its off-air message.
+            return JSONResponse(status_code=503, headers={"Retry-After": "30"},
+                                content={"detail": "The station has been taken off air by the administrator.",
+                                         "stopped": True})
+>>>>>>> 539cb38 (new update)
         playing = engine.now_playing()
         if playing is None:
             raise HTTPException(503, "No audio available yet. The station is still loading the channel.")
         return playing
 
     @router.get("/playlist")
-    def playlist(request: Request, limit: int = 100, offset: int = 0):
+    def playlist(request: Request, limit: int = 100, offset: int = 0, q: str = ""):
         engine = engine_or_503(request)
         limit = max(1, min(limit, 500))
-        rows = engine.db.radio_list_tracks(limit, max(0, offset))
-        return {"total": engine.db.radio_count(),
+        q = q.strip()[:100]
+        rows = engine.db.radio_list_tracks(limit, max(0, offset), q)
+        return {"total": engine.db.radio_count(q=q),
                 "total_seconds": engine.db.radio_total_seconds(),
                 "tracks": [{"id": r["message_id"], "title": r["title"], "performer": r["performer"],
                             "duration": r["duration"], "posted_at": r["posted_at"]} for r in rows]}
@@ -241,6 +283,8 @@ def build_radio_router() -> APIRouter:
     @router.get("/audio/{message_id}")
     async def audio(request: Request, message_id: int):
         engine = engine_or_503(request)
+        if engine.is_stopped():
+            raise HTTPException(503, "The station is off air")
         path = await engine.ensure_cached(message_id)
         track = engine.db.radio_get_track(message_id)
         if path is None or track is None:
@@ -250,16 +294,58 @@ def build_radio_router() -> APIRouter:
 
     @router.post("/sync-now")
     async def sync_now(request: Request, x_api_key: str | None = Header(default=None)):
-        expected = request.app.state.settings.admin_api_key
-        if not expected:
-            raise HTTPException(503, "Endpoint disabled: ADMIN_API_KEY is not configured")
-        if not x_api_key or not secrets.compare_digest(x_api_key.encode(), expected.encode()):
-            raise HTTPException(401, "Invalid API key")
+        require_admin(request, x_api_key)
         engine = engine_or_503(request)
         try:
             added = await engine.sync_once()
         except Exception:
             raise HTTPException(502, "Telegram sync failed; see server logs") from None
         return {"added": added, "tracks_in_rotation": engine.db.radio_count()}
+
+    # ---- administrator programming ------------------------------------------
+    # Sync `def` on purpose: FastAPI runs these in a worker thread (they use SQLite).
+    @router.get("/admin/program")
+    def admin_program(request: Request, x_api_key: str | None = Header(default=None)):
+        require_admin(request, x_api_key)
+        return engine_or_503(request).admin_overview()
+
+    @router.post("/admin/program")
+    def admin_save_program(request: Request, body: SeasonIn, x_api_key: str | None = Header(default=None)):
+        require_admin(request, x_api_key)
+        try:
+            return engine_or_503(request).set_season(
+                name=body.name, keywords=body.keywords, use_keywords=body.use_keywords,
+                start_date=body.start_date or None, end_date=body.end_date or None,
+                track_ids=body.track_ids, go_live=body.go_live)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+
+    @router.post("/admin/preview")
+    def admin_preview(request: Request, body: PreviewIn, x_api_key: str | None = Header(default=None)):
+        require_admin(request, x_api_key)
+        return engine_or_503(request).preview_season(body.keywords, body.use_keywords, body.track_ids)
+
+    @router.post("/admin/stop")
+    def admin_stop(request: Request, x_api_key: str | None = Header(default=None)):
+        require_admin(request, x_api_key)
+        return engine_or_503(request).stop()
+
+    @router.post("/admin/skip")
+    def admin_skip(request: Request, x_api_key: str | None = Header(default=None)):
+        require_admin(request, x_api_key)
+        try:
+            return engine_or_503(request).skip()
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+
+    @router.post("/admin/resume")
+    def admin_resume(request: Request, x_api_key: str | None = Header(default=None)):
+        require_admin(request, x_api_key)
+        return engine_or_503(request).resume()
+
+    @router.post("/admin/season/end")
+    def admin_end_season(request: Request, x_api_key: str | None = Header(default=None)):
+        require_admin(request, x_api_key)
+        return engine_or_503(request).end_season()
 
     return router

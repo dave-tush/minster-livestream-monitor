@@ -11,7 +11,11 @@ How it works
            checkpointed to SQLite every few seconds, so server downtime does not advance playback.
            When the last track finishes, the station loops back to the first.
 * FILES    Audio is downloaded lazily into a small disk cache (current + next few tracks) and old
-           files are evicted, so a big channel does not fill the disk.
+           files are evicted, so a big channel does not fill the disk. Downloads resume after an
+           interruption and are size-checked before a file is accepted.
+* PROGRAMME The administrator can STOP the station, and set a SEASON (a weekly / seasonal emphasis such
+           as "Consecration"): between two dates only that season's sermons are broadcast, found by
+           keyword in their titles and/or ticked by hand. Outside the dates the whole library plays.
 """
 import asyncio
 import logging
@@ -19,16 +23,23 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
 from .config import Settings
 from .database import Database
+from .seasons import build_playlist, clean_keywords
 
 log = logging.getLogger("radio")
 
+<<<<<<< HEAD
 TICK_SECONDS = 15           # seconds between Telegram-work iterations; checkpoints persist every ~5 s regardless
+=======
+TICK_SECONDS = 15           # how often the background loop wakes up
+DOWNLOAD_CHUNK = 512 * 1024  # Telegram download request size; resume points are multiples of this
+>>>>>>> 539cb38 (new update)
 
 
 # --------------------------------------------------------------------------- source
@@ -94,6 +105,7 @@ class TelethonSource:
 
     async def fetch_since(self, min_id: int) -> tuple[list[TrackMeta], int]:
         tracks: list[TrackMeta] = []
+        skipped: list[int] = []
         max_seen = min_id
         async for msg in self._client.iter_messages(self._entity, min_id=min_id, reverse=True):
             max_seen = max(max_seen, msg.id)
@@ -101,7 +113,7 @@ class TelethonSource:
             if f is None or not (msg.audio or msg.voice or (f.mime_type or "").startswith("audio/")):
                 continue
             if not f.duration:
-                log.warning("Skipping post %s: Telegram gave no duration for it.", msg.id)
+                skipped.append(msg.id)
                 continue
             caption = (msg.message or "").strip().splitlines()
             title = (f.title or (caption[0] if caption else "")
@@ -111,13 +123,31 @@ class TelethonSource:
                 performer=(f.performer or "")[:200], file_size=f.size or 0,
                 mime_type=f.mime_type or "audio/mpeg", ext=_safe_ext(f.ext),
                 posted_at=msg.date.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")))
+        if skipped:
+            log.warning("Radio: %d audio post(s) were left out because Telegram gave them no duration "
+                        "(first ones: %s). They are not in the rotation.", len(skipped), skipped[:8])
         return tracks, max_seen
 
     async def download(self, message_id: int, dest: Path) -> None:
+        """Download a post's file to `dest`. If `dest` already holds the start of the file (an
+        interrupted earlier attempt) the download carries on from there instead of starting over."""
         msg = await self._client.get_messages(self._entity, ids=message_id)
         if msg is None or msg.file is None:
             raise FileNotFoundError(f"Telegram post {message_id} no longer has a file")
-        await self._client.download_media(msg, file=str(dest))
+        total = msg.file.size or 0
+        offset = 0
+        if dest.exists():
+            have = dest.stat().st_size
+            if not (total and have > total):                   # bigger than the file: start again
+                offset = (have // DOWNLOAD_CHUNK) * DOWNLOAD_CHUNK   # keep whole chunks only
+                if offset:
+                    log.info("Radio: resuming download of post %s at %.1f MB", message_id, offset / 1048576)
+            with open(dest, "r+b") as fh:
+                fh.truncate(offset)
+        with open(dest, "ab" if offset else "wb") as fh:
+            async for data in self._client.iter_download(msg.media, offset=offset, request_size=DOWNLOAD_CHUNK,
+                                                         file_size=total or None):
+                fh.write(data)
 
 
 # --------------------------------------------------------------------------- engine
@@ -127,6 +157,30 @@ def _parse(ts: str) -> datetime:
 
 def _fmt(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_epoch(raw: str) -> datetime:
+    try:
+        return _parse(raw if raw.endswith("Z") else raw + "Z") if "T" in raw else \
+            datetime.fromisoformat(raw).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def _as_date(value: str | None) -> date | None:
+    try:
+        return date.fromisoformat(value) if value else None
+    except ValueError:
+        return None
+
+
+def _load_tz(name: str) -> tuple[tzinfo, str]:
+    try:
+        return ZoneInfo(name), name
+    except Exception:                                   # unknown name, or no tz database on this machine
+        log.warning("Radio: time zone '%s' is not available; season dates will use UTC. "
+                    "Set RADIO_TIMEZONE to an IANA name such as Africa/Lagos.", name)
+        return timezone.utc, "UTC"
 
 
 def _public(track: dict) -> dict:
@@ -146,16 +200,183 @@ class RadioEngine:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()            # serialises on-air pointer updates
         self._dl_locks: dict[int, asyncio.Lock] = {}
+        self._downloading: set[int] = set()
+        self._dl_error: dict[int, str] = {}            # last download problem per track (shown to the admin)
+        self._dl_fail: dict[int, tuple[int, float]] = {}   # failures so far, and when prefetch may retry
+        self._prefetch_task: asyncio.Task | None = None
+        self.tz, self.tz_name = _load_tz(settings.radio_timezone)
+        self.epoch = _parse_epoch(settings.radio_epoch)
         self.last_error: str | None = None
         self.last_sync_at: str | None = None
         self._mono_at_checkpoint: float | None = None   # mono time when checkpoint was persisted
         self._position_at_checkpoint: float = 0.0       # position_seconds at checkpoint time
         self._checkpoint_interval = max(checkpoint_interval_seconds, 0.5)
 
+    # ---- programming: stop, resume, seasons ---------------------------------
+    @staticmethod
+    def _season_state(prog: dict, today: date) -> str:
+        """off | scheduled (starts later) | active | ended (end date has passed)."""
+        if not prog["season_on"]:
+            return "off"
+        start, end = _as_date(prog["start_date"]), _as_date(prog["end_date"])
+        if start and today < start:
+            return "scheduled"
+        if end and today > end:
+            return "ended"
+        return "active"
+
+    def _scoped(self, prog: dict, now: datetime) -> bool:
+        """True while a season is active AND has sermons: only those are broadcast."""
+        return (self._season_state(prog, now.astimezone(self.tz).date()) == "active"
+                and self.db.radio_playlist_count() > 0)
+
+    def is_stopped(self) -> bool:
+        return self.db.radio_program_get()["stopped"]
+
+    def refresh_playlist(self) -> int:
+        """Rebuild the season playlist from its keywords and hand-picked sermons. Returns its size."""
+        prog = self.db.radio_program_get()
+        ids: list[int] = []
+        if prog["season_on"]:
+            keywords = prog["keywords"] if prog["use_keywords"] else []
+            ids, _ = build_playlist(self.db.radio_tracks_brief(), keywords, prog["picks"])
+        self.db.radio_playlist_set(ids)
+        return len(ids)
+
+    def preview_season(self, keywords, use_keywords: bool, track_ids) -> dict:
+        """What a season would contain (nothing is saved): used by the admin screen as you type."""
+        kws = clean_keywords(keywords) if use_keywords else []
+        ids, matched = build_playlist(self.db.radio_tracks_brief(), kws, [int(i) for i in track_ids or []])
+        return {"playlist": ids, "matched": matched, "total_seconds": self._seconds(ids)}
+
+    def _seconds(self, ids: list[int]) -> int:
+        wanted = set(ids)
+        return sum(t["duration"] for t in self.db.radio_tracks_brief() if t["message_id"] in wanted)
+
+    def set_season(self, *, name: str, keywords=None, use_keywords: bool = True, start_date: str | None = None,
+                   end_date: str | None = None, track_ids=(), go_live: bool = False,
+                   now: datetime | None = None) -> dict:
+        """Save the season and start using it. Raises ValueError with a message fit for the admin screen."""
+        now = now or self._clock()
+        name = re.sub(r"\s+", " ", name or "").strip()[:80]
+        if not name:
+            raise ValueError("Give the season a name, for example Consecration.")
+        start, end = _as_date(start_date), _as_date(end_date)
+        if (start_date and not start) or (end_date and not end):
+            raise ValueError("Dates must look like 2026-11-30.")
+        if start and end and end < start:
+            raise ValueError("The 'to' date is before the 'from' date.")
+        kws = clean_keywords(keywords)
+        if use_keywords and not kws:
+            kws = [name]
+        known = {t["message_id"] for t in self.db.radio_tracks_brief()}
+        picks = sorted({int(i) for i in track_ids if int(i) in known})
+        if not use_keywords and not picks:
+            raise ValueError("Tick at least one sermon, or turn on matching by keyword.")
+        playlist, _ = build_playlist(self.db.radio_tracks_brief(), kws if use_keywords else [], picks)
+        if not playlist:
+            raise ValueError("No sermon title matches those keywords yet. Change the keywords, "
+                             "or tick sermons from the list.")
+        self.db.radio_program_save_season(name=name, keywords=kws, use_keywords=use_keywords,
+                                          start_date=start.isoformat() if start else None,
+                                          end_date=end.isoformat() if end else None, picks=picks)
+        self.refresh_playlist()
+        if go_live:
+            self.resume(now)
+        log.info("Radio: season '%s' saved (%d sermons, %s to %s).", name, len(playlist),
+                 start or "now", end or "until ended")
+        return self.admin_overview(now)
+
+    def end_season(self, now: datetime | None = None) -> dict:
+        """Back to the whole library. The season's settings are kept so it can be switched on again."""
+        self.db.radio_program_set_season_on(False)
+        self.refresh_playlist()
+        log.info("Radio: season ended by the administrator.")
+        return self.admin_overview(now)
+
+    def stop(self, now: datetime | None = None) -> dict:
+        """Take the station off air. The on-air position is frozen, so resume() carries on from it."""
+        now = now or self._clock()
+        prog = self.db.radio_program_get()
+        if not prog["stopped"]:
+            with self._lock:
+                self._advance(now, self._scoped(prog, now))      # save exactly where we are
+                self.db.radio_program_set_stopped(True, _fmt(now))
+            log.info("Radio: stopped by the administrator.")
+        return self.admin_overview(now)
+
+    def resume(self, now: datetime | None = None) -> dict:
+        """Back on air from the moment it was stopped (the time off air is not counted)."""
+        now = now or self._clock()
+        prog = self.db.radio_program_get()
+        if prog["stopped"]:
+            with self._lock:
+                state = self.db.radio_get_state()
+                if prog["stopped_at"] and state["started_at"] and state["message_id"]:
+                    gap = max(0.0, (now - _parse(prog["stopped_at"])).total_seconds())
+                    self.db.radio_set_state(state["message_id"],
+                                            _fmt(_parse(state["started_at"]) + timedelta(seconds=gap)))
+                self.db.radio_program_set_stopped(False)
+            log.info("Radio: back on air.")
+        return self.admin_overview(now)
+
+    def program_status(self, now: datetime | None = None) -> dict:
+        now = now or self._clock()
+        prog = self.db.radio_program_get()
+        today = now.astimezone(self.tz).date()
+        state = self._season_state(prog, today)
+        size = self.db.radio_playlist_count() if prog["season_on"] else 0
+        on_season = state == "active" and size > 0
+        return {
+            "stopped": prog["stopped"],
+            "mode": "stopped" if prog["stopped"] else ("season" if on_season else "library"),
+            "timezone": self.tz_name,
+            "today": today.isoformat(),
+            "library_tracks": self.db.radio_count(),
+            "season": {
+                "enabled": prog["season_on"], "state": state, "name": prog["season_name"],
+                "keywords": prog["keywords"], "use_keywords": prog["use_keywords"],
+                "start_date": prog["start_date"], "end_date": prog["end_date"],
+                "picks": prog["picks"], "tracks": size,
+            },
+        }
+
+    def _track_health(self, public: dict | None) -> dict | None:
+        """Is this track on disk yet? (the answer to "why does the next sermon not play?")"""
+        if not public:
+            return None
+        track = self.db.radio_get_track(public["id"])
+        if track is None:
+            return None
+        path = self.cache_path(track)
+        part = path.with_name(path.name + ".part")
+        size = track["file_size"] or 0
+        if path.exists():
+            have, ready = size or path.stat().st_size, True
+        else:
+            have, ready = (part.stat().st_size if part.exists() else 0), False
+        return {"id": track["message_id"], "title": track["title"], "ready": ready,
+                "downloading": track["message_id"] in self._downloading,
+                "percent": 100 if ready else (min(99, int(100 * have / size)) if size else 0),
+                "error": None if ready else self._dl_error.get(track["message_id"])}
+
+    def admin_overview(self, now: datetime | None = None) -> dict:
+        now = now or self._clock()
+        out = self.program_status(now)
+        playing = self.now_playing(now)
+        out["on_air"] = playing and {"id": playing["track"]["id"], "title": playing["track"]["title"],
+                                     "started_at": playing["started_at"]}
+        out["health"] = {"current": self._track_health(playing and playing["track"]),
+                         "next": self._track_health(playing and playing["next"]),
+                         "last_error": self.last_error, "last_sync_at": self.last_sync_at}
+        return out
+
     # ---- the on-air clock ------------------------------------------------
     def now_playing(self, now: datetime | None = None) -> dict | None:
-        """What is on air right now (advances the pointer if the track has finished)."""
+        """What is on air right now (advances the pointer if the track has finished).
+        None when the station is stopped or has nothing to play."""
         now = now or self._clock()
+<<<<<<< HEAD
         settings = self.db.radio_settings_get()
         if not settings["enabled"]:
             return None
@@ -164,6 +385,18 @@ class RadioEngine:
             if track is None:
                 return None
             nxt = self.db.radio_next_track(track["message_id"])
+=======
+        prog = self.db.radio_program_get()
+        if prog["stopped"]:
+            return None
+        scoped = self._scoped(prog, now)
+        with self._lock:
+            track, started = self._advance(now, scoped)
+            if track is None:
+                return None
+            position = max(0.0, (now - started).total_seconds())
+            nxt = self.db.radio_next_track(track["message_id"], scoped)
+>>>>>>> 539cb38 (new update)
             return {
                 "station": self.settings.radio_name,
                 "track": _public(track),
@@ -172,6 +405,7 @@ class RadioEngine:
                 "started_at": _fmt(started),
                 "next": _public(nxt) if nxt and nxt["message_id"] != track["message_id"] else None,
                 "server_time": _fmt(now),
+<<<<<<< HEAD
                 "tracks_in_rotation": self.db.radio_count(),
                 "season": ({"name": settings["season_name"], "emphasis": settings["emphasis"],
                             "starts_on": settings["starts_on"], "ends_on": settings["ends_on"]}
@@ -228,11 +462,37 @@ class RadioEngine:
             position = 0.0
             self._mono_at_checkpoint = self._mono_clock()
             self._position_at_checkpoint = 0.0
+=======
+                "tracks_in_rotation": self.db.radio_count(scoped),
+                # What the listener page shows as the current emphasis (None = the whole library).
+                "season": ({"name": prog["season_name"], "start_date": prog["start_date"],
+                            "end_date": prog["end_date"]} if scoped else None),
+            }
+
+    def _advance(self, now: datetime, scoped: bool = False) -> tuple[dict | None, datetime]:
+        state = self.db.radio_get_state()
+        track = self.db.radio_get_track(state["message_id"]) if state["message_id"] else None
+        if (track is None or not track["available"] or not state["started_at"]
+                or (scoped and not self.db.radio_in_scope(track["message_id"]))):
+            if state["message_id"] is None:
+                # Nothing was ever on air here: a new or wiped disk. Join the fixed schedule so a restart
+                # does not send every listener back to the oldest sermon.
+                track, started = self._join_schedule(now, scoped)
+                if track is None:
+                    return None, now
+            else:
+                # the on-air track was removed, or a season has begun and this sermon is not in it
+                track = self.db.radio_first_track(scoped)
+                if track is None:
+                    return None, now
+                started = now
+>>>>>>> 539cb38 (new update)
         else:
             started = _parse(state["started_at"]) if state["started_at"] else now
             if started > now:                            # clock moved backwards: restart this track
                 started = now
 
+<<<<<<< HEAD
             checkpoint_at = state.get("checkpoint_at")
             position_seconds = state.get("position_seconds")
             if checkpoint_at is not None and position_seconds is not None:
@@ -268,6 +528,20 @@ class RadioEngine:
                 started = started + timedelta(seconds=track["duration"])
                 track = nxt
                 safety += 1
+=======
+        # While the server was off the station kept "broadcasting": skip whole loops of the
+        # playlist instead of stepping through every track.
+        total = self.db.radio_total_seconds(scoped)
+        elapsed = (now - started).total_seconds()
+        if total > 0 and elapsed >= total:
+            started += timedelta(seconds=(elapsed // total) * total)
+
+        for _ in range(self.db.radio_count(scoped) + 1):
+            if (now - started).total_seconds() < track["duration"]:
+                break
+            started += timedelta(seconds=track["duration"])
+            track = self.db.radio_next_track(track["message_id"], scoped) or track
+>>>>>>> 539cb38 (new update)
 
         # Persist if track or started_at changed
         if (track["message_id"] != state["message_id"]
@@ -337,6 +611,39 @@ class RadioEngine:
         with self._lock:
             self._checkpoint_locked(now)
 
+    def _join_schedule(self, now: datetime, scoped: bool) -> tuple[dict | None, datetime]:
+        """Where a 24/7 station that began at `self.epoch` and loops the playlist would be right now."""
+        schedule = self.db.radio_schedule(scoped)
+        total = sum(t["duration"] for t in schedule)
+        if not schedule or total <= 0:
+            return None, now
+        offset = max(0.0, (now - self.epoch).total_seconds()) % total
+        passed = 0
+        for t in schedule:
+            if offset < passed + t["duration"]:
+                track = self.db.radio_get_track(t["message_id"])
+                log.info("Radio: no saved position, joining the schedule at '%s' (%d min in).",
+                         track["title"], int((offset - passed) // 60))
+                return track, now - timedelta(seconds=offset - passed)
+            passed += t["duration"]
+        return self.db.radio_first_track(scoped), now
+
+    def skip(self, now: datetime | None = None) -> dict:
+        """Move straight on to the next sermon (also a quick way to test that sermon changes work)."""
+        now = now or self._clock()
+        prog = self.db.radio_program_get()
+        if prog["stopped"]:
+            raise ValueError("The radio is stopped. Put it back on air first.")
+        scoped = self._scoped(prog, now)
+        with self._lock:
+            track, _ = self._advance(now, scoped)
+            if track is None:
+                raise ValueError("Nothing is on air yet, so there is nothing to skip.")
+            nxt = self.db.radio_next_track(track["message_id"], scoped) or track
+            self.db.radio_set_state(nxt["message_id"], _fmt(now))
+        log.info("Radio: skipped to '%s' by the administrator.", nxt["title"])
+        return self.admin_overview(now)
+
     # ---- syncing the channel --------------------------------------------
     @staticmethod
     def _channel_key(raw: str) -> str:
@@ -388,14 +695,38 @@ class RadioEngine:
         self.last_sync_at = _fmt(self._clock())
         if added:
             log.info("Radio: added %d new track(s); %d in rotation.", added, self.db.radio_count())
+            self.refresh_playlist()                        # a new upload may belong to the season
         return added
 
     # ---- file cache ------------------------------------------------------
     def cache_path(self, track: dict) -> Path:
         return self.cache_dir / f"{track['message_id']}{track['ext']}"
 
+    def _note_failure(self, message_id: int, problem) -> None:
+        """Remember a failed download; prefetch waits longer before each retry (30 s, 60 s ... 15 min)."""
+        count = self._dl_fail.get(message_id, (0, 0.0))[0] + 1
+        self._dl_fail[message_id] = (count, time.monotonic() + min(30 * 2 ** (count - 1), 900))
+        self._dl_error[message_id] = str(problem)[:200] or type(problem).__name__
+        log.error("Radio: download of %s failed (attempt %d): %s", message_id, count, problem)
+
+    def _backing_off(self, message_id: int) -> bool:
+        return time.monotonic() < self._dl_fail.get(message_id, (0, 0.0))[1]
+
+    @staticmethod
+    def _incomplete(part: Path, track: dict) -> str | None:
+        """None if the downloaded file is the size Telegram promised; otherwise what is wrong."""
+        if not part.exists() or part.stat().st_size == 0:
+            return "the download produced no data"
+        expected, size = track["file_size"] or 0, part.stat().st_size
+        if expected and size != expected:
+            if size > expected:
+                part.unlink(missing_ok=True)              # cannot be right: start over next time
+            return f"incomplete download ({size} of {expected} bytes)"
+        return None
+
     async def ensure_cached(self, message_id: int) -> Path | None:
-        """Local file for a track, downloading it first if needed. None if it can't be fetched."""
+        """Local file for a track, downloading it first if needed. None if it can't be fetched.
+        A partly downloaded file is kept and continued on the next attempt."""
         track = self.db.radio_get_track(message_id)
         if track is None:
             return None
@@ -407,34 +738,58 @@ class RadioEngine:
             if path.exists():
                 return path
             part = path.with_name(path.name + ".part")
+            self._downloading.add(message_id)
             try:
                 log.info("Radio: downloading '%s' (%s)...", track["title"], message_id)
-                await self.source.download(message_id, part)
-                part.replace(path)
-            except Exception as exc:
-                part.unlink(missing_ok=True)
-                log.error("Radio: download of %s failed: %s", message_id, exc)
-                if isinstance(exc, FileNotFoundError):
+                try:
+                    await self.source.download(message_id, part)
+                except FileNotFoundError:
+                    part.unlink(missing_ok=True)
                     self.db.radio_set_available(message_id, False)   # post was deleted
-                return None
+                    log.error("Radio: post %s was deleted from the channel; skipping it.", message_id)
+                    return None
+                except Exception as exc:
+                    self._note_failure(message_id, exc)
+                    return None
+                problem = self._incomplete(part, track)
+                if problem:
+                    self._note_failure(message_id, problem)
+                    return None
+                part.replace(path)
+                self._dl_fail.pop(message_id, None)
+                self._dl_error.pop(message_id, None)
+            finally:
+                self._downloading.discard(message_id)
         return path
 
     async def prefetch(self) -> None:
-        """Make sure the on-air track and the next few are on disk."""
-        current = await asyncio.to_thread(self.now_playing)
-        if current is None:
-            return
-        ids = [current["track"]["id"]]
-        nxt = current["next"]
-        for _ in range(self.settings.radio_prefetch_count):
-            if not nxt:
-                break
-            ids.append(nxt["id"])
-            after = self.db.radio_next_track(nxt["id"])
-            nxt = _public(after) if after and after["message_id"] not in ids else None
-        for mid in ids:
-            await self.ensure_cached(mid)
-        self.evict(keep=set(ids))
+        """Make sure the on-air track and the next few are on disk (never raises)."""
+        try:
+            current = await asyncio.to_thread(self.now_playing)
+            if current is None:
+                return                                   # stopped, or nothing to play
+            scoped = current["season"] is not None
+            ids = [current["track"]["id"]]
+            nxt = current["next"]
+            for _ in range(self.settings.radio_prefetch_count):
+                if not nxt:
+                    break
+                ids.append(nxt["id"])
+                after = self.db.radio_next_track(nxt["id"], scoped)
+                nxt = _public(after) if after and after["message_id"] not in ids else None
+            for mid in ids:
+                if not self._backing_off(mid):
+                    await self.ensure_cached(mid)
+            self.evict(keep=set(ids))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.error("Radio: prefetch error: %s", exc)
+
+    def _kick_prefetch(self) -> None:
+        """Run prefetch in the background so a slow download never holds up syncing or reconnecting."""
+        if self._prefetch_task is None or self._prefetch_task.done():
+            self._prefetch_task = asyncio.create_task(self.prefetch())
 
     def evict(self, keep: set[int]) -> None:
         """Delete the oldest cached files once the cache is over its size limit."""
@@ -453,14 +808,52 @@ class RadioEngine:
     async def run_forever(self, stop: asyncio.Event) -> None:
         """Connect, sync, keep the next tracks downloaded. Never raises (except cancellation)."""
         log.info("Radio started: %s", self.settings.radio_name)
+        saved = self.db.radio_count()
+        if saved:
+            log.info("Radio: found %d saved tracks and the saved on-air position; only new uploads will be scanned.", saved)
+        else:
+            log.warning("Radio: no saved tracks found (first run, or the disk was wiped by a redeploy/restart). "
+                        "Scanning the whole channel now; the station is off air until that finishes. "
+                        "Put the database and cache on a persistent disk to avoid this.")
         connected = False
         next_sync = 0.0
         next_checkpoint = 0.0
         next_attempt = 0.0          # network work is allowed at/after this loop time
         loop = asyncio.get_running_loop()
         failures = 0
+<<<<<<< HEAD
 
         # Initialize checkpoint state from persisted database on startup.
+=======
+        while not stop.is_set():
+            delay = TICK_SECONDS
+            try:
+                if not connected:
+                    await self.source.connect()
+                    connected = True
+                if loop.time() >= next_sync:
+                    await self.sync_once()
+                    next_sync = loop.time() + self.settings.radio_sync_interval_seconds
+                self._kick_prefetch()
+                self.last_error, failures = None, 0
+            except Exception as exc:
+                failures += 1
+                self.last_error = str(exc)
+                delay = min(TICK_SECONDS * (2 ** failures), 600)
+                log.error("Radio error: %s. Retrying in %ds.", exc, delay)
+                if connected:                       # reconnect from scratch after a failure
+                    try:
+                        await self.source.disconnect()
+                    except Exception:
+                        pass
+                    connected = False
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=delay)
+            except asyncio.TimeoutError:
+                pass
+        if self._prefetch_task and not self._prefetch_task.done():
+            self._prefetch_task.cancel()
+>>>>>>> 539cb38 (new update)
         try:
             await asyncio.to_thread(self._init_checkpoint_state)
         except Exception as exc:
