@@ -182,21 +182,8 @@ class Database:
                              "VALUES (1, 'offline', NULL, ?)", (utcnow(),))
             if conn.execute("SELECT 1 FROM radio_state WHERE id = 1").fetchone() is None:
                 conn.execute("INSERT INTO radio_state (id, updated_at) VALUES (1, ?)", (utcnow(),))
-<<<<<<< HEAD
-            if conn.execute("SELECT 1 FROM radio_settings WHERE id = 1").fetchone() is None:
-                conn.execute("INSERT INTO radio_settings (id, updated_at) VALUES (1, ?)", (utcnow(),))
-
-    def _migrate_radio_state(self, conn) -> None:
-        """Add position_seconds and checkpoint_at columns to existing radio_state tables."""
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(radio_state)")}
-        if "position_seconds" not in cols:
-            conn.execute("ALTER TABLE radio_state ADD COLUMN position_seconds INTEGER NOT NULL DEFAULT 0")
-        if "checkpoint_at" not in cols:
-            conn.execute("ALTER TABLE radio_state ADD COLUMN checkpoint_at TEXT")
-=======
             if conn.execute("SELECT 1 FROM radio_program WHERE id = 1").fetchone() is None:
                 conn.execute("INSERT INTO radio_program (id, updated_at) VALUES (1, ?)", (utcnow(),))
->>>>>>> 539cb38 (new update)
 
     # ---- writes ----------------------------------------------------------
     def record_live(self, video: LiveVideo, minister_name: str,
@@ -309,18 +296,6 @@ class Database:
             row = conn.execute("SELECT * FROM radio_tracks WHERE message_id = ?", (message_id,)).fetchone()
         return dict(row) if row else None
 
-<<<<<<< HEAD
-    def radio_track_in_rotation(self, message_id: int) -> bool:
-        with self._tx() as conn:
-            where, args = _radio_rotation_filter(conn)
-            return conn.execute(f"SELECT 1 FROM radio_tracks WHERE {where} AND message_id = ?",
-                                (*args, message_id)).fetchone() is not None
-
-    def radio_first_track(self) -> dict | None:
-        with self._tx() as conn:
-            where, args = _radio_rotation_filter(conn)
-            row = conn.execute(f"SELECT * FROM radio_tracks WHERE {where} ORDER BY message_id LIMIT 1", args).fetchone()
-=======
     # "scoped" = only the active season's sermons (radio_season_playlist) instead of the whole library.
     _SCOPE = " AND message_id IN (SELECT message_id FROM radio_season_playlist)"
 
@@ -329,35 +304,22 @@ class Database:
             row = conn.execute("SELECT * FROM radio_tracks WHERE available = 1"
                                + (self._SCOPE if scoped else "")
                                + " ORDER BY message_id LIMIT 1").fetchone()
->>>>>>> 539cb38 (new update)
         return dict(row) if row else None
 
     def radio_next_track(self, after_message_id: int, scoped: bool = False) -> dict | None:
         """The track after `after_message_id`, wrapping back to the first one at the end."""
         scope = self._SCOPE if scoped else ""
         with self._tx() as conn:
-<<<<<<< HEAD
-            where, args = _radio_rotation_filter(conn)
-            row = conn.execute(f"SELECT * FROM radio_tracks WHERE {where} AND message_id > ? "
-                               "ORDER BY message_id LIMIT 1", (*args, after_message_id)).fetchone()
-            if row is None:
-                row = conn.execute(f"SELECT * FROM radio_tracks WHERE {where} ORDER BY message_id LIMIT 1", args).fetchone()
-=======
             row = conn.execute("SELECT * FROM radio_tracks WHERE available = 1 AND message_id > ?"
                                + scope + " ORDER BY message_id LIMIT 1", (after_message_id,)).fetchone()
             if row is None:
                 row = conn.execute("SELECT * FROM radio_tracks WHERE available = 1" + scope
                                    + " ORDER BY message_id LIMIT 1").fetchone()
->>>>>>> 539cb38 (new update)
         return dict(row) if row else None
 
     def radio_schedule(self, scoped: bool = False) -> list[dict]:
         """(message_id, duration) of every playable track in broadcast order."""
         with self._tx() as conn:
-<<<<<<< HEAD
-            where, args = _radio_rotation_filter(conn)
-            return conn.execute(f"SELECT COALESCE(SUM(duration), 0) FROM radio_tracks WHERE {where}", args).fetchone()[0]
-=======
             rows = conn.execute("SELECT message_id, duration FROM radio_tracks WHERE available = 1"
                                 + (self._SCOPE if scoped else "") + " ORDER BY message_id").fetchall()
         return [dict(r) for r in rows]
@@ -366,7 +328,6 @@ class Database:
         with self._tx() as conn:
             return conn.execute("SELECT COALESCE(SUM(duration), 0) FROM radio_tracks WHERE available = 1"
                                 + (self._SCOPE if scoped else "")).fetchone()[0]
->>>>>>> 539cb38 (new update)
 
     def radio_set_available(self, message_id: int, available: bool) -> None:
         with self._tx() as conn:
@@ -384,55 +345,6 @@ class Database:
             sql += " AND (LOWER(title) LIKE ? ESCAPE '\\' OR LOWER(performer) LIKE ? ESCAPE '\\')"
             args += [self._like(q.strip())] * 2
         with self._tx() as conn:
-<<<<<<< HEAD
-            where, args = _radio_rotation_filter(conn)
-            rows = conn.execute(f"SELECT * FROM radio_tracks WHERE {where} "
-                                "ORDER BY message_id LIMIT ? OFFSET ?", (*args, limit, offset)).fetchall()
-        return [dict(r) for r in rows]
-
-    def radio_catalog(self, search: str = "", limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
-        """Search sermon names/metadata only; never downloads or returns audio files."""
-        term = "%" + search.strip().replace("%", "\\%").replace("_", "\\_") + "%"
-        with self._tx() as conn:
-            total = conn.execute("SELECT COUNT(*) FROM radio_tracks WHERE available = 1 AND title LIKE ? ESCAPE '\\'", (term,)).fetchone()[0]
-            rows = conn.execute("SELECT message_id, title, performer, duration, posted_at FROM radio_tracks "
-                                "WHERE available = 1 AND title LIKE ? ESCAPE '\\' "
-                                "ORDER BY message_id LIMIT ? OFFSET ?", (term, limit, offset)).fetchall()
-        return [dict(r) for r in rows], total
-
-    def radio_settings_get(self) -> dict:
-        with self._tx() as conn:
-            row = dict(conn.execute("SELECT * FROM radio_settings WHERE id = 1").fetchone())
-            selected = conn.execute("SELECT t.message_id, t.title, t.performer, t.duration "
-                                     "FROM radio_season_tracks s JOIN radio_tracks t USING(message_id) "
-                                     "ORDER BY s.position").fetchall()
-        today = datetime.now(timezone.utc).date().isoformat()
-        row["enabled"] = bool(row["enabled"])
-        row["season_track_ids"] = [r["message_id"] for r in selected]
-        row["season_tracks"] = [dict(r) for r in selected]
-        row["season_active"] = bool(row["season_name"] and row["starts_on"] and row["ends_on"]
-                                    and row["starts_on"] <= today <= row["ends_on"] and selected)
-        return row
-
-    def radio_settings_set(self, *, enabled: bool, season_name: str, emphasis: str,
-                           starts_on: str | None, ends_on: str | None, track_ids: list[int]) -> None:
-        now = utcnow()
-        with self._tx() as conn:
-            conn.execute("UPDATE radio_settings SET enabled = ?, season_name = ?, emphasis = ?, "
-                         "starts_on = ?, ends_on = ?, updated_at = ? WHERE id = 1",
-                         (int(enabled), season_name, emphasis, starts_on, ends_on, now))
-            conn.execute("DELETE FROM radio_season_tracks")
-            for position, message_id in enumerate(track_ids):
-                conn.execute("INSERT INTO radio_season_tracks (message_id, position) VALUES (?, ?)",
-                             (message_id, position))
-            conn.execute("UPDATE radio_state SET message_id = NULL, started_at = NULL, position_seconds = 0, "
-                         "checkpoint_at = NULL, updated_at = ? WHERE id = 1", (now,))
-
-    def radio_count(self) -> int:
-        with self._tx() as conn:
-            where, args = _radio_rotation_filter(conn)
-            return conn.execute(f"SELECT COUNT(*) FROM radio_tracks WHERE {where}", args).fetchone()[0]
-=======
             rows = conn.execute(sql + " ORDER BY message_id LIMIT ? OFFSET ?", args + [limit, offset]).fetchall()
         return [dict(r) for r in rows]
 
@@ -501,7 +413,6 @@ class Database:
         with self._tx() as conn:
             return conn.execute("SELECT COUNT(*) FROM radio_tracks WHERE available = 1 AND message_id IN "
                                 "(SELECT message_id FROM radio_season_playlist)").fetchone()[0]
->>>>>>> 539cb38 (new update)
 
     # ---- transcript / ministration timing ------------------------------------
     def transcript_get(self, video_id: str) -> dict | None:
@@ -556,14 +467,8 @@ class Database:
         """Forget every saved track and the on-air position (used when the Telegram channel changes)."""
         with self._tx() as conn:
             conn.execute("DELETE FROM radio_tracks")
-<<<<<<< HEAD
-            conn.execute("DELETE FROM radio_season_tracks")
-            conn.execute("UPDATE radio_settings SET season_name = '', emphasis = '', starts_on = NULL, "
-                         "ends_on = NULL, updated_at = ? WHERE id = 1", (utcnow(),))
-=======
             conn.execute("DELETE FROM radio_season_picks")        # post numbers belong to the old channel
             conn.execute("DELETE FROM radio_season_playlist")
->>>>>>> 539cb38 (new update)
             conn.execute("UPDATE radio_state SET message_id = NULL, started_at = NULL, "
                          "last_synced_id = 0, position_seconds = 0, checkpoint_at = NULL, "
                          "updated_at = ? WHERE id = 1", (utcnow(),))
