@@ -3,6 +3,7 @@ import asyncio
 import html
 import logging
 import secrets
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -10,7 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 from .config import ENV_OVERRIDES, Settings
+from .d1 import D1StateStore
 from .database import Database
+from .keepalive import KeepAliveStatus, Watchdog, keep_alive_loop
 from .monitor import Monitor
 from .radio import RadioEngine, TelethonSource
 from .radio_routes import build_radio_router
@@ -118,8 +121,13 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
         if rad is None and cfg.radio_configured:
             rdb = mon.db if mon else Database(cfg.database_url)
             rdb.init_schema()
+            store = (D1StateStore(cfg.cloudflare_account_id, cfg.cloudflare_d1_database_id,
+                                  cfg.cloudflare_api_token) if cfg.d1_configured else None)
+            log.info("Cloudflare D1 position storage: %s.", "ON" if store else "off (set CLOUDFLARE_* to enable)")
             rad = RadioEngine(cfg, rdb, TelethonSource(cfg.telegram_api_id, cfg.telegram_api_hash,
-                                                       cfg.telegram_session_string, cfg.telegram_channel))
+                                                       cfg.telegram_session_string, cfg.telegram_channel,
+                                                       include_no_duration=cfg.radio_include_no_duration),
+                              state_store=store)
             log.info("Radio enabled: %s (channel %s)", cfg.radio_name, cfg.telegram_channel)
         elif rad is None:
             log.warning("Radio DISABLED (set TELEGRAM_API_ID, TELEGRAM_API_HASH, "
@@ -127,16 +135,30 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
         app.state.radio = rad
 
         stop = asyncio.Event()
-        task = asyncio.create_task(mon.run_forever(stop)) if (run_background and mon) else None
-        radio_task = asyncio.create_task(rad.run_forever(stop)) if (rad and run_radio) else None
+        ka = KeepAliveStatus(cfg.keep_alive_url if run_background else "", cfg.keep_alive_interval_seconds)
+        app.state.keepalive = ka
+        dog = Watchdog(stop, ka)
+        if run_background and mon:
+            dog.start("monitor", lambda: mon.run_forever(stop))
+        if rad and run_radio:
+            dog.start("radio", lambda: rad.run_forever(stop),
+                      stale=lambda: time.monotonic() - rad.last_tick_at)
+        extra = []
+        if run_background and (mon or rad):
+            extra.append(asyncio.create_task(dog.run()))
+        if ka.url:
+            extra.append(asyncio.create_task(keep_alive_loop(ka, stop)))
+        elif run_background:
+            log.warning("Keep-alive OFF: no KEEP_ALIVE_URL or RENDER_EXTERNAL_URL. "
+                        "Use an external pinger on /health to stop Render sleeping.")
         yield
         stop.set()
-        for t in (task, radio_task):
-            if t:
-                try:
-                    await asyncio.wait_for(t, timeout=10)
-                except asyncio.TimeoutError:
-                    t.cancel()
+        await dog.cancel_all()
+        for t in extra:
+            try:
+                await asyncio.wait_for(t, timeout=5)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                t.cancel()
 
     app = FastAPI(title="Minister Livestream Monitor", lifespan=lifespan)
 
@@ -179,6 +201,19 @@ def create_app(settings: Settings | None = None, monitor: Monitor | None = None,
     @app.api_route("/health", methods=["GET", "HEAD"])
     def health():
         return {"status": "ok"}
+
+    @app.get("/health/detail")
+    def health_detail(request: Request):
+        """Is each background loop alive? Useful for the uptime pinger and for debugging."""
+        rad, ka = request.app.state.radio, getattr(request.app.state, "keepalive", None)
+        out = {"status": "ok", "keepalive": ka.as_dict() if ka else {"enabled": False}}
+        if rad is not None:
+            out["radio"] = {"tracks": rad.db.radio_count(), "last_error": rad.last_error,
+                            "last_sync_at": rad.last_sync_at, "last_snapshot_at": rad.last_snapshot_at,
+                            "resumed_after_restart": rad.restored_from_snapshot,
+                            "d1": rad.state_store is not None,
+                            "seconds_since_loop_progress": round(time.monotonic() - rad.last_tick_at)}
+        return out
 
     @app.get("/status")
     def status(request: Request):
