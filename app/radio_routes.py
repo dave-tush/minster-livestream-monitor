@@ -199,16 +199,10 @@ def build_radio_router() -> APIRouter:
     @router.get("/now")
     def now(request: Request):
         engine = engine_or_503(request)
-<<<<<<< HEAD
-        if not engine.db.radio_settings_get()["enabled"]:
-            raise HTTPException(503, {"code": "stopped", "message": "Radio stopped by an administrator"})
-=======
         if engine.is_stopped():
-            # The player page recognises "stopped" and pauses itself, then shows its off-air message.
             return JSONResponse(status_code=503, headers={"Retry-After": "30"},
-                                content={"detail": "The station has been taken off air by the administrator.",
+                                content={"detail": {"code": "stopped", "message": "Radio stopped by an administrator"},
                                          "stopped": True})
->>>>>>> 539cb38 (new update)
         playing = engine.now_playing()
         if playing is None:
             raise HTTPException(503, "No audio available yet. The station is still loading the channel.")

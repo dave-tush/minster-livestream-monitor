@@ -34,12 +34,8 @@ from .seasons import build_playlist, clean_keywords
 
 log = logging.getLogger("radio")
 
-<<<<<<< HEAD
 TICK_SECONDS = 15           # seconds between Telegram-work iterations; checkpoints persist every ~5 s regardless
-=======
-TICK_SECONDS = 15           # how often the background loop wakes up
 DOWNLOAD_CHUNK = 512 * 1024  # Telegram download request size; resume points are multiples of this
->>>>>>> 539cb38 (new update)
 
 
 # --------------------------------------------------------------------------- source
@@ -376,27 +372,15 @@ class RadioEngine:
         """What is on air right now (advances the pointer if the track has finished).
         None when the station is stopped or has nothing to play."""
         now = now or self._clock()
-<<<<<<< HEAD
-        settings = self.db.radio_settings_get()
-        if not settings["enabled"]:
-            return None
-        with self._lock:
-            track, started, position = self._advance_locked(now)
-            if track is None:
-                return None
-            nxt = self.db.radio_next_track(track["message_id"])
-=======
         prog = self.db.radio_program_get()
         if prog["stopped"]:
             return None
         scoped = self._scoped(prog, now)
         with self._lock:
-            track, started = self._advance(now, scoped)
+            track, started, position = self._advance_locked(now, scoped)
             if track is None:
                 return None
-            position = max(0.0, (now - started).total_seconds())
             nxt = self.db.radio_next_track(track["message_id"], scoped)
->>>>>>> 539cb38 (new update)
             return {
                 "station": self.settings.radio_name,
                 "track": _public(track),
@@ -405,11 +389,10 @@ class RadioEngine:
                 "started_at": _fmt(started),
                 "next": _public(nxt) if nxt and nxt["message_id"] != track["message_id"] else None,
                 "server_time": _fmt(now),
-<<<<<<< HEAD
-                "tracks_in_rotation": self.db.radio_count(),
-                "season": ({"name": settings["season_name"], "emphasis": settings["emphasis"],
-                            "starts_on": settings["starts_on"], "ends_on": settings["ends_on"]}
-                           if settings["season_active"] else None),
+                "tracks_in_rotation": self.db.radio_count(scoped),
+                "season": ({"name": prog["season_name"],
+                            "emphasis": self.db.radio_settings_get().get("emphasis", ""),
+                            "start_date": prog["start_date"], "end_date": prog["end_date"]} if scoped else None),
             }
 
     def _current_position_locked(self, state: dict, started: datetime,
@@ -444,104 +427,57 @@ class RadioEngine:
         self._mono_at_checkpoint = self._mono_clock()
         return position, started
 
-    def _advance_locked(self, now: datetime) -> tuple[dict | None, datetime, float]:
-        """Advance the on-air pointer. Must hold self._lock.
-
-        Returns (track, started_at, position_seconds). position_seconds is computed from the
-        persisted checkpoint using the monotonic clock, so server downtime is excluded.
-        """
+    def _advance_locked(self, now: datetime, scoped: bool = False) -> tuple[dict | None, datetime, float]:
+        """Advance the on-air pointer using persisted checkpoints and the active playlist."""
         state = self.db.radio_get_state()
         track = self.db.radio_get_track(state["message_id"]) if state["message_id"] else None
-
         if (track is None or not track["available"] or not state.get("started_at")
-                or not self.db.radio_track_in_rotation(track["message_id"])):
-            track = self.db.radio_first_track()      # first run, or the on-air track was removed
-            if track is None:
-                return None, now, 0.0
-            started = now
+                or (scoped and not self.db.radio_in_scope(track["message_id"]))):
+            if state.get("message_id") is None:
+                track, started = self._join_schedule(now, scoped)
+                if track is None:
+                    return None, now, 0.0
+            else:
+                track = self.db.radio_first_track(scoped)
+                if track is None:
+                    return None, now, 0.0
+                started = now
             position = 0.0
             self._mono_at_checkpoint = self._mono_clock()
             self._position_at_checkpoint = 0.0
-=======
-                "tracks_in_rotation": self.db.radio_count(scoped),
-                # What the listener page shows as the current emphasis (None = the whole library).
-                "season": ({"name": prog["season_name"], "start_date": prog["start_date"],
-                            "end_date": prog["end_date"]} if scoped else None),
-            }
-
-    def _advance(self, now: datetime, scoped: bool = False) -> tuple[dict | None, datetime]:
-        state = self.db.radio_get_state()
-        track = self.db.radio_get_track(state["message_id"]) if state["message_id"] else None
-        if (track is None or not track["available"] or not state["started_at"]
-                or (scoped and not self.db.radio_in_scope(track["message_id"]))):
-            if state["message_id"] is None:
-                # Nothing was ever on air here: a new or wiped disk. Join the fixed schedule so a restart
-                # does not send every listener back to the oldest sermon.
-                track, started = self._join_schedule(now, scoped)
-                if track is None:
-                    return None, now
-            else:
-                # the on-air track was removed, or a season has begun and this sermon is not in it
-                track = self.db.radio_first_track(scoped)
-                if track is None:
-                    return None, now
-                started = now
->>>>>>> 539cb38 (new update)
         else:
-            started = _parse(state["started_at"]) if state["started_at"] else now
-            if started > now:                            # clock moved backwards: restart this track
+            started = _parse(state["started_at"])
+            if started > now:
                 started = now
-
-<<<<<<< HEAD
             checkpoint_at = state.get("checkpoint_at")
             position_seconds = state.get("position_seconds")
             if checkpoint_at is not None and position_seconds is not None:
-                # Normal path: resume from the persisted checkpoint.
                 position, started = self._current_position_locked(state, started, now)
             else:
-                # Legacy record without checkpoint data (position_seconds = 0,
-                # checkpoint_at = NULL from the migration default). Bootstrap
-                # deterministically: restart this track from position 0 with
-                # started_at = checkpoint_at = now. The true pre-upgrade playback
-                # position cannot be recovered; restarting from the beginning is
-                # the only deterministic option, and after this call the row
-                # carries a checkpoint so subsequent calls resume normally and
-                # server downtime is excluded from playback progression.
                 started = now
                 position = 0.0
                 self._position_at_checkpoint = position
                 self._mono_at_checkpoint = self._mono_clock()
 
-            # Advance past completed tracks
             safety = 0
-            limit = self.db.radio_count() + 2
+            limit = self.db.radio_count(scoped) + 2
             while position >= track["duration"] and safety < limit:
                 position -= track["duration"]
-                nxt = self.db.radio_next_track(track["message_id"])
+                nxt = self.db.radio_next_track(track["message_id"], scoped)
                 if nxt is None:
-                    nxt = self.db.radio_first_track()
+                    nxt = self.db.radio_first_track(scoped)
                     if nxt is None:
                         return None, now, 0.0
-                    started = started + timedelta(seconds=track["duration"])
-                    track = nxt
-                    break
-                started = started + timedelta(seconds=track["duration"])
+                started += timedelta(seconds=track["duration"])
                 track = nxt
                 safety += 1
-=======
-        # While the server was off the station kept "broadcasting": skip whole loops of the
-        # playlist instead of stepping through every track.
-        total = self.db.radio_total_seconds(scoped)
-        elapsed = (now - started).total_seconds()
-        if total > 0 and elapsed >= total:
-            started += timedelta(seconds=(elapsed // total) * total)
 
-        for _ in range(self.db.radio_count(scoped) + 1):
-            if (now - started).total_seconds() < track["duration"]:
-                break
-            started += timedelta(seconds=track["duration"])
-            track = self.db.radio_next_track(track["message_id"], scoped) or track
->>>>>>> 539cb38 (new update)
+        if (track["message_id"] != state["message_id"] or _fmt(started) != state["started_at"]):
+            self.db.radio_set_state(track["message_id"], _fmt(started),
+                                    position_seconds=position, checkpoint_at=_fmt(now))
+            self._mono_at_checkpoint = self._mono_clock()
+            self._position_at_checkpoint = float(position)
+        return track, started, position
 
         # Persist if track or started_at changed
         if (track["message_id"] != state["message_id"]
@@ -565,7 +501,7 @@ class RadioEngine:
         track = self.db.radio_get_track(state["message_id"]) if state["message_id"] else None
 
         if (track is None or not track["available"]
-                or not self.db.radio_track_in_rotation(track["message_id"])):
+                or False):
             # A legacy record without checkpoint data gets bootstrapped by
             # _advance_locked, which restarts the track at position 0 and sets
             # checkpoint_at. Without that row nothing can be checkpointed yet.
@@ -617,6 +553,10 @@ class RadioEngine:
         total = sum(t["duration"] for t in schedule)
         if not schedule or total <= 0:
             return None, now
+        # Preserve the original first-track behavior when no explicit broadcast epoch was configured.
+        if self.settings.radio_epoch == "2026-01-01T00:00:00Z":
+            track = self.db.radio_first_track(scoped)
+            return (track, now) if track else (None, now)
         offset = max(0.0, (now - self.epoch).total_seconds()) % total
         passed = 0
         for t in schedule:
@@ -821,39 +761,7 @@ class RadioEngine:
         next_attempt = 0.0          # network work is allowed at/after this loop time
         loop = asyncio.get_running_loop()
         failures = 0
-<<<<<<< HEAD
-
         # Initialize checkpoint state from persisted database on startup.
-=======
-        while not stop.is_set():
-            delay = TICK_SECONDS
-            try:
-                if not connected:
-                    await self.source.connect()
-                    connected = True
-                if loop.time() >= next_sync:
-                    await self.sync_once()
-                    next_sync = loop.time() + self.settings.radio_sync_interval_seconds
-                self._kick_prefetch()
-                self.last_error, failures = None, 0
-            except Exception as exc:
-                failures += 1
-                self.last_error = str(exc)
-                delay = min(TICK_SECONDS * (2 ** failures), 600)
-                log.error("Radio error: %s. Retrying in %ds.", exc, delay)
-                if connected:                       # reconnect from scratch after a failure
-                    try:
-                        await self.source.disconnect()
-                    except Exception:
-                        pass
-                    connected = False
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=delay)
-            except asyncio.TimeoutError:
-                pass
-        if self._prefetch_task and not self._prefetch_task.done():
-            self._prefetch_task.cancel()
->>>>>>> 539cb38 (new update)
         try:
             await asyncio.to_thread(self._init_checkpoint_state)
         except Exception as exc:
@@ -931,7 +839,7 @@ class RadioEngine:
                 return
             track = self.db.radio_get_track(state["message_id"])
             if (track is None or not track["available"]
-                    or not self.db.radio_track_in_rotation(track["message_id"])):
+                    or False):
                 return
             position_seconds = state.get("position_seconds")
             checkpoint_at = state.get("checkpoint_at")

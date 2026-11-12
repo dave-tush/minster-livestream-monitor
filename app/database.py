@@ -172,6 +172,15 @@ class Database:
         finally:
             conn.close()
 
+    @staticmethod
+    def _migrate_radio_state(conn) -> None:
+        """Add checkpoint columns to databases created before playback recovery support."""
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(radio_state)")}
+        if "position_seconds" not in columns:
+            conn.execute("ALTER TABLE radio_state ADD COLUMN position_seconds REAL NOT NULL DEFAULT 0")
+        if "checkpoint_at" not in columns:
+            conn.execute("ALTER TABLE radio_state ADD COLUMN checkpoint_at TEXT")
+
     def init_schema(self) -> None:
         with self._tx() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
@@ -184,6 +193,8 @@ class Database:
                 conn.execute("INSERT INTO radio_state (id, updated_at) VALUES (1, ?)", (utcnow(),))
             if conn.execute("SELECT 1 FROM radio_program WHERE id = 1").fetchone() is None:
                 conn.execute("INSERT INTO radio_program (id, updated_at) VALUES (1, ?)", (utcnow(),))
+            if conn.execute("SELECT 1 FROM radio_settings WHERE id = 1").fetchone() is None:
+                conn.execute("INSERT INTO radio_settings (id, updated_at) VALUES (1, ?)", (utcnow(),))
 
     # ---- writes ----------------------------------------------------------
     def record_live(self, video: LiveVideo, minister_name: str,
@@ -300,6 +311,8 @@ class Database:
     _SCOPE = " AND message_id IN (SELECT message_id FROM radio_season_playlist)"
 
     def radio_first_track(self, scoped: bool = False) -> dict | None:
+        if not scoped:
+            scoped = self.radio_settings_get()["season_active"]
         with self._tx() as conn:
             row = conn.execute("SELECT * FROM radio_tracks WHERE available = 1"
                                + (self._SCOPE if scoped else "")
@@ -349,6 +362,10 @@ class Database:
         return [dict(r) for r in rows]
 
     def radio_count(self, scoped: bool = False, q: str = "") -> int:
+        # The legacy settings API treated an active selected season as the rotation by default.
+        if not scoped:
+            legacy = self.radio_settings_get()
+            scoped = legacy["season_active"]
         sql, args = "SELECT COUNT(*) FROM radio_tracks WHERE available = 1" + (self._SCOPE if scoped else ""), []
         if q.strip():
             sql += " AND (LOWER(title) LIKE ? ESCAPE '\\' OR LOWER(performer) LIKE ? ESCAPE '\\')"
@@ -391,6 +408,49 @@ class Database:
             conn.execute("DELETE FROM radio_season_picks")
             conn.executemany("INSERT OR IGNORE INTO radio_season_picks (message_id) VALUES (?)",
                              [(int(i),) for i in picks])
+
+    # Backwards-compatible aliases for the original admin-config API.
+    def radio_catalog(self, search: str = "", limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
+        term = self._like(search.strip())
+        where = "available = 1"
+        args: list[object] = []
+        if search.strip():
+            where += " AND (LOWER(title) LIKE ? ESCAPE '\\' OR LOWER(performer) LIKE ? ESCAPE '\\')"
+            args += [term, term]
+        with self._tx() as conn:
+            total = conn.execute("SELECT COUNT(*) FROM radio_tracks WHERE " + where, args).fetchone()[0]
+            rows = conn.execute("SELECT message_id, title, performer, duration, posted_at FROM radio_tracks WHERE "
+                                + where + " ORDER BY message_id LIMIT ? OFFSET ?", args + [limit, offset]).fetchall()
+        return [dict(r) for r in rows], total
+
+    def radio_track_in_rotation(self, message_id: int) -> bool:
+        return self.radio_get_track(message_id) is not None and self.radio_in_scope(message_id)
+
+    def radio_settings_get(self) -> dict:
+        with self._tx() as conn:
+            row = dict(conn.execute("SELECT * FROM radio_settings WHERE id = 1").fetchone())
+            selected = [r[0] for r in conn.execute("SELECT message_id FROM radio_season_tracks ORDER BY position")]
+        today = datetime.now(timezone.utc).date().isoformat()
+        row["enabled"] = bool(row["enabled"])
+        row["season_track_ids"] = selected
+        row["season_active"] = bool(row["season_name"] and row["starts_on"] and row["ends_on"]
+                                    and row["starts_on"] <= today <= row["ends_on"] and selected)
+        return row
+
+    def radio_settings_set(self, *, enabled: bool, season_name: str, emphasis: str,
+                           starts_on: str | None, ends_on: str | None, track_ids: list[int]) -> None:
+        now = utcnow()
+        with self._tx() as conn:
+            conn.execute("UPDATE radio_settings SET enabled = ?, season_name = ?, emphasis = ?, starts_on = ?, ends_on = ?, updated_at = ? WHERE id = 1",
+                         (int(enabled), season_name, emphasis, starts_on, ends_on, now))
+            conn.execute("DELETE FROM radio_season_tracks")
+            conn.executemany("INSERT INTO radio_season_tracks (message_id, position) VALUES (?, ?)",
+                             [(int(i), pos) for pos, i in enumerate(track_ids)])
+            conn.execute("UPDATE radio_program SET stopped = ?, season_on = ?, season_name = ?, keywords = ?, use_keywords = 0, start_date = ?, end_date = ?, updated_at = ? WHERE id = 1",
+                         (0 if enabled else 1, int(bool(season_name and starts_on and ends_on and track_ids)), season_name,
+                          json.dumps([]), starts_on, ends_on, now))
+            conn.execute("DELETE FROM radio_season_playlist")
+            conn.executemany("INSERT INTO radio_season_playlist (message_id) VALUES (?)", [(int(i),) for i in track_ids])
 
     def radio_program_set_season_on(self, enabled: bool) -> None:
         with self._tx() as conn:
