@@ -73,11 +73,24 @@ class Settings:
     radio_cache_max_mb: int = 1024
     radio_sync_interval_seconds: int = 300
     radio_prefetch_count: int = 2
-    # Season start/end dates are calendar dates in this time zone (an IANA name such as Africa/Lagos).
-    radio_timezone: str = "Africa/Lagos"
-    # When the station has no saved position (a new or wiped disk) it joins a fixed 24/7 schedule that
-    # started at this moment, instead of starting again from the oldest sermon. Never change it once live.
-    radio_epoch: str = "2026-01-01T00:00:00Z"
+    # Telegram audio posts with no duration are still included (length estimated, then corrected
+    # from the real file once it is downloaded). Set RADIO_INCLUDE_NO_DURATION=false to skip them.
+    radio_include_no_duration: bool = True
+    # Save the on-air position to Telegram "Saved Messages" so the station resumes after Render
+    # restarts it (Render's free disk is wiped on every restart, so SQLite alone cannot remember).
+    radio_snapshot: bool = True
+    radio_snapshot_interval_seconds: int = 60
+    # Cloudflare D1: durable storage for the on-air position (survives Render restarts).
+    cloudflare_account_id: str = ""
+    cloudflare_d1_database_id: str = ""
+    cloudflare_api_token: str = field(default="", repr=False)
+    # --- Keep-alive: the service pings its own public URL so Render does not spin it down ---
+    keep_alive_url: str = ""
+    keep_alive_interval_seconds: int = 240
+
+    @property
+    def d1_configured(self) -> bool:
+        return bool(self.cloudflare_account_id and self.cloudflare_d1_database_id and self.cloudflare_api_token)
 
     @property
     def radio_configured(self) -> bool:
@@ -119,8 +132,15 @@ class Settings:
             radio_cache_max_mb=max(int(os.getenv("RADIO_CACHE_MAX_MB", "1024")), 50),
             radio_sync_interval_seconds=max(int(os.getenv("RADIO_SYNC_INTERVAL_SECONDS", "300")), 30),
             radio_prefetch_count=max(int(os.getenv("RADIO_PREFETCH_COUNT", "2")), 0),
-            radio_timezone=os.getenv("RADIO_TIMEZONE", "Africa/Lagos").strip() or "Africa/Lagos",
-            radio_epoch=os.getenv("RADIO_EPOCH", "2026-01-01T00:00:00Z").strip() or "2026-01-01T00:00:00Z",
+            radio_include_no_duration=_parse_bool(os.getenv("RADIO_INCLUDE_NO_DURATION"), True),
+            radio_snapshot=_parse_bool(os.getenv("RADIO_SNAPSHOT"), True),
+            radio_snapshot_interval_seconds=max(int(os.getenv("RADIO_SNAPSHOT_INTERVAL_SECONDS", "60")), 15),
+            # Render sets RENDER_EXTERNAL_URL itself, so keep-alive works with no setup there.
+            cloudflare_account_id=os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip(),
+            cloudflare_d1_database_id=os.getenv("CLOUDFLARE_D1_DATABASE_ID", "").strip(),
+            cloudflare_api_token=os.getenv("CLOUDFLARE_API_TOKEN", "").strip(),
+            keep_alive_url=(os.getenv("KEEP_ALIVE_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").strip().rstrip("/"),
+            keep_alive_interval_seconds=min(max(int(os.getenv("KEEP_ALIVE_INTERVAL_SECONDS", "240")), 30), 840),
         )
 
     def require_youtube(self) -> None:

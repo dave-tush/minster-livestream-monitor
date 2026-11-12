@@ -10,6 +10,9 @@ interval is 10 minutes. Uses only the Python standard library.
 
 Settings can also come from the environment: KEEP_ALIVE_URL, KEEP_ALIVE_INTERVAL (seconds).
 
+NOTE: the backend now pings itself too (see app/keepalive.py). This script is only the outside
+backup that can wake a service that has already gone to sleep.
+
 NOTE: this script must itself run somewhere that is always on (a VPS, a Raspberry Pi, a home PC that
 never sleeps, a cron service). If you have nowhere like that, use a free external pinger instead
 (UptimeRobot or cron-job.org) pointed at the same /health URL.
@@ -22,7 +25,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-DEFAULT_URL = "https://minster-livestream-monitor-zcvp.onrender.com/health"
+DEFAULT_URL = "https://minster-livestream-monitor.onrender.com/health"
 DEFAULT_INTERVAL = 600          # 10 minutes: safely under Render's 15-minute idle limit
 TIMEOUT = 75                    # a cold start can take 30-60 s, so wait long enough for it
 RETRY_AFTER = 30                # after a failed ping, try again soon instead of waiting 10 minutes
